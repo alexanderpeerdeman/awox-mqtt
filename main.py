@@ -1,18 +1,30 @@
-import struct
-import awoxmeshlight
-import logging
 import json
+import logging
+import struct
+import time
+import types
+
+import awoxmeshlight
+import bluepy
 import paho.mqtt.client as mqtt
+import webcolors
+from awoxmeshlight import packetutils as pckt
 
 MESH_NAME = "FDCqrGLE"
 MESH_PASSWORD = "3588b7f4"
 
+# receive message from mqtt -> apply to light // todo: find out if we can apply color_mode and brightness simultaneously
+# receive notification from mesh -> apply to local state of light -> publish state
 
-def publish_discovery_message(client: mqtt.Client, unique_id, friendly_name):
-    client.publish("homeassistant/light/{}/config".format(unique_id), json.dumps({
-        "~": "homeassistant/light/"+unique_id,
-        "name": friendly_name,
-        "unique_id": unique_id,
+
+def publish_discovery_message(light):
+    mesh_id = light["mesh_id"]
+    client.publish("homeassistant/light/{}/config".format(mesh_id), json.dumps({
+        "~": "homeassistant/light/{}".format(mesh_id),
+        # "name": friendly_name,    # We dont know the lights names, that should be dealt with in HA.
+        # Hopefully the unique id lets this config survive restarts of the mqtt script.
+        "unique_id": "{}".format(mesh_id),
+        "object_id": "{}".format(mesh_id),
         "command_topic": "~/set",
         "state_topic": "~/state",
         "schema": "json",
@@ -24,15 +36,16 @@ def publish_discovery_message(client: mqtt.Client, unique_id, friendly_name):
     }))
 
 
-def match_message(client: mqtt.Client, message: mqtt.MQTTMessage):
+def match_message(message: mqtt.MQTTMessage):
     topic_parts = message.topic.split("/")
-    unique_id = topic_parts[2]
-    mac = unique_id.replace("-", ":")
-    print(mac)
-    payload = json.loads(message.payload)
-    print(payload)
+    print(topic_parts)
+    mesh_id = int(topic_parts[2])
+    if mesh_id in lights.keys():
+        light = lights[mesh_id]
 
-    execute_command(mac, payload, client)
+        payload = json.loads(message.payload)
+        print("Executing a command on {}:\n{}".format(light, payload))
+        execute_command(light, payload)
 
 
 def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
@@ -44,132 +57,99 @@ def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) 
     return max(new_value, min_to)
 
 
-def pub_state(client: mqtt.Client, mac, state):
+def pub_state(light):
+    if light["mode"] == 8 or light["mode"] == 9:
+        brightness = light["white_brightness"]
+        color_mode = "color_temp"
+    else:
+        brightness = light["color_brightness"]
+        color_mode = "rgb"
+    color_temp = convert_value_to_available_range(
+        light["white_temp"], 0, 127, 153, 500)
+
+    r = convert_value_to_available_range(light["red"], 1, 127, 3, 255)
+    g = convert_value_to_available_range(light["green"], 1, 127, 3, 255)
+    b = convert_value_to_available_range(light["blue"], 1, 127, 3, 255)
+
+    if light["status"] == 1:
+        state = "ON"
+    else:
+        state = "OFF"
+
+    payload = json.dumps({
+        "brightness": brightness,
+        "color": {
+            "r": r,
+            "g": g,
+            "b": b,
+        },
+        "color_mode": color_mode,
+        "color_temp": color_temp,
+        "state": state
+    })
+
     client.publish(
-        "homeassistant/light/{}/state".format(str(mac).replace(":", "-")), json.dumps(state))
+        "homeassistant/light/{}/state".format(light["mesh_id"]), payload)
 
 
-def execute_command(mac, payload, client: mqtt.Client):
-    mesh_id = mesh_ids[mac]
-    light = light_state[mac]
+def execute_command(light, payload):
+    try:
+        if "brightness" in payload:
+            if light["mode"] == 8 or light["mode"] == 9:
+                print("set white brightness")
+                requested = payload["brightness"]
+                adjusted = convert_value_to_available_range(
+                    requested, 3, 255, 1, int(0x7f))
 
-    print(light)
-    if "brightness" in payload:
-        if light["color_mode"] == "rgb":
-            print("set color brightness")
-            requested = payload["brightness"]
-            adjusted = convert_value_to_available_range(
-                requested, 3, 255, int(0xa), int(0x64))
-
-            data = struct.pack('B', adjusted)
-            try:
+                data = struct.pack('B', adjusted)
                 lightGateway.writeCommand(
-                    awoxmeshlight.C_COLOR_BRIGHTNESS, data, mesh_id)
-            except:
-                print("error setting color brightness")
-            light["state"] = "ON"
-            light["brightness"] = requested
+                    awoxmeshlight.C_WHITE_BRIGHTNESS, data, light["mesh_id"])
+            else:
+                print("set color brightness")
+                requested = payload["brightness"]
+                adjusted = convert_value_to_available_range(
+                    requested, 3, 255, int(0xa), int(0x64))
 
-            pub_state(client, mac, {"brightness": requested, "state": "ON"})
-            return
-        elif light["color_mode"] == "color_temp":
-            print("set white brightness")
-            requested = payload["brightness"]
-            adjusted = convert_value_to_available_range(
-                requested, 3, 255, 1, int(0x7f))
-
-            data = struct.pack('B', adjusted)
-            try:
+                data = struct.pack('B', adjusted)
                 lightGateway.writeCommand(
-                    awoxmeshlight.C_WHITE_BRIGHTNESS, data, mesh_id)
-            except:
-                print("error setting white brightness")
+                    awoxmeshlight.C_COLOR_BRIGHTNESS, data, light["mesh_id"])
 
-            light["state"] = "ON"
-            light["brightness"] = requested
-            pub_state(client, mac, {"brightness": requested, "state": "ON"})
-            return
-        return
-
-    if "color_temp" in payload:
-        print("set temp")
-        requestedTemp = payload["color_temp"]
-        adjustedTemp = convert_value_to_available_range(
-            requestedTemp, 153, 500, 0, int(0x7f))
-        data = struct.pack('B', adjustedTemp)
-        try:
+        if "color_temp" in payload:
+            print("set temp")
+            requestedTemp = payload["color_temp"]
+            adjustedTemp = convert_value_to_available_range(
+                requestedTemp, 153, 500, 0, int(0x7f))
+            data = struct.pack('B', adjustedTemp)
             lightGateway.writeCommand(
-                awoxmeshlight.C_WHITE_TEMPERATURE, data, mesh_id)
-        except:
-            print("error setting temp")
-        light["color_mode"] = "color_temp"
-        light["color_temp"] = requestedTemp
-        light["state"] = "ON"
-        pub_state(client, mac, {
-            "color_mode": "color_temp",
-            "color_temp": requestedTemp,
-            "state": "ON",
-        })
-        return
+                awoxmeshlight.C_WHITE_TEMPERATURE, data, light["mesh_id"])
 
-    if "color" in payload:
-        print("set color")
-        reqRed = payload["color"]["r"]
-        reqGreen = payload["color"]["g"]
-        reqBlue = payload["color"]["b"]
-        adjRed = convert_value_to_available_range(
-            reqRed, 0, 255, 0, int(0xff))
-        adjGreen = convert_value_to_available_range(
-            reqGreen, 0, 255, 0, int(0xff))
-        adjBlue = convert_value_to_available_range(
-            reqBlue, 0, 255, 0, int(0xff))
+        if "color" in payload:
+            print("set color")
+            reqRed = payload["color"]["r"]
+            reqGreen = payload["color"]["g"]
+            reqBlue = payload["color"]["b"]
+            adjRed = convert_value_to_available_range(
+                reqRed, 0, 255, 0, int(0xff))
+            adjGreen = convert_value_to_available_range(
+                reqGreen, 0, 255, 0, int(0xff))
+            adjBlue = convert_value_to_available_range(
+                reqBlue, 0, 255, 0, int(0xff))
 
-        data = struct.pack('BBBB', 0x04, adjRed, adjGreen, adjBlue)
-        try:
-            lightGateway.writeCommand(awoxmeshlight.C_COLOR, data, mesh_id)
-        except:
-            print("error setting color")
+            data = struct.pack('BBBB', 0x04, adjRed, adjGreen, adjBlue)
+            lightGateway.writeCommand(
+                awoxmeshlight.C_COLOR, data, light["mesh_id"])
 
-        light["color_mode"] = "rgb"
-        light["color"] = {
-            "r": reqRed,
-            "g": reqGreen,
-            "b": reqBlue,
-        }
-        light["state"] = "ON"
+        if payload["state"] == "ON":
+            print("turn on")
+            lightGateway.writeCommand(
+                awoxmeshlight.C_POWER, b'\x01', light["mesh_id"])
 
-        pub_state(client, mac, {
-            "color_mode": "rgb",
-            "color": {
-                "r": reqRed,
-                "g": reqGreen,
-                "b": reqBlue,
-            },
-            "state": "ON",
-        })
-        return
-
-    if payload["state"] == "ON" and light["state"] == "OFF":
-        print("turn on")
-        try:
-            lightGateway.writeCommand(awoxmeshlight.C_POWER, b'\x01', mesh_id)
-        except:
-            print("error turn on")
-        light["state"] = "ON"
-
-        pub_state(client, mac, {"state": "ON"})
-        return
-
-    if payload["state"] == "OFF" and light["state"] == "ON":
-        print("turn off")
-        try:
-            lightGateway.writeCommand(awoxmeshlight.C_POWER, b'\x00', mesh_id)
-        except:
-            print("error turn off")
-        light["state"] = "OFF"
-
-        pub_state(client, mac, {"state": "OFF"})
-        return
+        if payload["state"] == "OFF":
+            print("turn off")
+            lightGateway.writeCommand(
+                awoxmeshlight.C_POWER, b'\x00', light["mesh_id"])
+    except bluepy.btle.BTLEInternalError as e:
+        print("error:", e)
 
 
 def on_connect(client: mqtt.Client, userdata, flags, rc):
@@ -181,7 +161,76 @@ def on_connect(client: mqtt.Client, userdata, flags, rc):
 def on_message(client: mqtt.Client, userdata, msg):
     print(msg.topic+" "+str(msg.payload))
 
-    match_message(client, msg)
+    match_message(msg)
+
+
+def closest_color(requested_color):
+    min_colors = {}
+    for key, name in webcolors.CSS3_HEX_TO_NAMES.items():
+        r_c, g_c, b_c = webcolors.hex_to_rgb(key)
+        rd = (r_c - requested_color[0]) ** 2
+        gd = (g_c - requested_color[1]) ** 2
+        bd = (b_c - requested_color[2]) ** 2
+        min_colors[(rd + gd + bd)] = name
+    return min_colors[min(min_colors.keys())]
+
+
+def get_color_name(requested_color):
+    try:
+        closest_name = actual_name = webcolors.rgb_to_name(requested_color)
+    except ValueError:
+        closest_name = closest_color(requested_color)
+        actual_name = None
+    return actual_name, closest_name
+
+
+def myHandleNotification(self, cHandle, data):
+    char = self.light.btdevice.getCharacteristics(cHandle)[0]
+    if char.uuid == awoxmeshlight.STATUS_CHAR_UUID:
+        logger.info("Notification on status char.")
+        message = pckt.decrypt_packet(
+            self.light.session_key, self.light.mac, data)
+    else:
+        logger.info("Receiced notification from characteristic %s",
+                    char.uuid.getCommonName())
+        message = pckt.decrypt_packet(
+            self.light.session_key, self.light.mac, data)
+        # logger.info("Received message : %s", repr(message))
+        self.light.parseStatusResult(message)
+
+
+def myParseStatusResult(self, message):
+    meshid = struct.unpack('B', message[3:4])[0]
+    for i, m in enumerate(struct.unpack('B'*len(message), message)):
+        print("{:03d} ".format(m), end="")
+    print("")
+    idR = struct.unpack('B', message[10:11])[0]
+    idL = struct.unpack('B', message[19:20])[0]
+
+    integer_meshid = (idL << 8) + idR
+    if integer_meshid not in lights.keys():
+        print("Need to set up light {}".format(integer_meshid))
+        lights[integer_meshid] = {"mesh_id": integer_meshid}
+        publish_discovery_message(lights[integer_meshid])
+        time.sleep(0.25)
+    light = lights[integer_meshid]
+
+    mode = struct.unpack('B', message[12:13])[0]
+
+    if mode < 40 and meshid == 0:  # filter some messages that return something else
+        light["mode"] = mode
+        light["status"] = mode % 2
+
+        light["white_brightness"] = struct.unpack('B', message[13:14])[0]
+        light["white_temp"] = struct.unpack('B', message[14:15])[0]
+
+        light["color_brightness"] = struct.unpack('B', message[15:16])[0]
+        light["red"] = struct.unpack('B', message[16:17])[0]
+        light["green"] = struct.unpack('B', message[17:18])[0]
+        light["blue"] = struct.unpack('B', message[18:19])[0]
+
+        print(json.dumps(light, indent=2, default=str))
+        pub_state(light)
 
 
 # ======
@@ -192,50 +241,42 @@ try:
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
-    with open("devices.json") as f:
-        devices = json.load(f)
-
-    for device in devices:
-        if device["name"] == "Decke":
-            lightGateway = awoxmeshlight.AwoxMeshLight(
-                device["mac"], MESH_NAME, MESH_PASSWORD)
-            lightGateway.connect()
-
     client = mqtt.Client()
     client.username_pw_set("mosquitto", "protocol-supervision-failed")
     client.on_connect = on_connect
     client.on_message = on_message
 
+    # Stehlampe
+    lightGateway = awoxmeshlight.AwoxMeshLight(
+        "a4:c1:38:5b:22:89", MESH_NAME, MESH_PASSWORD)
+
+    # apply own handler functions to the library light object
+    lightGateway.parseStatusResult = types.MethodType(
+        myParseStatusResult, lightGateway)
+    lightGateway.btdevice.delegate.handleNotification = types.MethodType(
+        myHandleNotification, lightGateway)  # TODO this does nothing.
+
     client.connect("192.168.0.32", 1883, 60)
+    client.loop_start()
+    lightGateway.connect()
+    lights = {}
 
-    mesh_ids = {}
-    light_state = {}
+    # publish_discovery_message should be called when the light is first added to the array of
+    # light states. If the light goes offline we handle it differently (we dont delete it from HA)
+    # publish_discovery_message(client, light)
+    while True:
+        try:
+            if lightGateway.btdevice.waitForNotifications(1.0):
+                continue
+        except Exception as e:
+            print("Error in loop:", e)
 
-    for device in devices:
-        if "light" in device["type"]:
-            print(device)
-            mesh_ids[device["mac"]] = device["mesh_id"]
-            light_state[device["mac"]] = {
-                "color_mode": "color_temp",
-                "state": "OFF",
-                "brightness": 255,
-                "color": {
-                    "r": 0,
-                    "g": 0,
-                    "b": 0,
-                },
-                "color_temp": "155"
-            }
-            publish_discovery_message(client, str(
-                device["mac"]).replace(":", "-"), device["name"])
+        time.sleep(0.25)
 
-    client.loop_forever()
 finally:
     print("Disconnecting.")
     lightGateway.disconnect()
-    for device in devices:
-        if "light" in device["type"]:
-            client.publish(
-                "homeassistant/light/{}/config".format(device["mac"]).replace(":", "-"), None)
+    for mesh_id in lights.keys():
+        client.publish("homeassistant/light/{}/config".format(mesh_id, None))
 
     client.disconnect()
