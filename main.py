@@ -21,7 +21,8 @@ def publish_discovery_message(light):
     mesh_id = light["mesh_id"]
     client.publish("homeassistant/light/{}/config".format(mesh_id), json.dumps({
         "~": "homeassistant/light/{}".format(mesh_id),
-        # "name": friendly_name,    # We dont know the lights names, that should be dealt with in HA.
+        # We dont know the lights names, that should be dealt with in HA.
+        "name": mesh_id,
         # Hopefully the unique id lets this config survive restarts of the mqtt script.
         "unique_id": "{}".format(mesh_id),
         "object_id": "{}".format(mesh_id),
@@ -59,10 +60,12 @@ def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) 
 
 def pub_state(light):
     if light["mode"] == 8 or light["mode"] == 9:
-        brightness = light["white_brightness"]
+        brightness = convert_value_to_available_range(
+            light["white_brightness"], 1, 127, 3, 255)
         color_mode = "color_temp"
     else:
-        brightness = light["color_brightness"]
+        brightness = convert_value_to_available_range(
+            light["color_brightness"], 10, 100, 3, 255)
         color_mode = "rgb"
     color_temp = convert_value_to_available_range(
         light["white_temp"], 0, 127, 153, 500)
@@ -139,12 +142,12 @@ def execute_command(light, payload):
             lightGateway.writeCommand(
                 awoxmeshlight.C_COLOR, data, light["mesh_id"])
 
-        if payload["state"] == "ON":
+        if payload["state"] == "ON" and light["status"] == 0:
             print("turn on")
             lightGateway.writeCommand(
                 awoxmeshlight.C_POWER, b'\x01', light["mesh_id"])
 
-        if payload["state"] == "OFF":
+        if payload["state"] == "OFF" and light["status"] == 1:
             print("turn off")
             lightGateway.writeCommand(
                 awoxmeshlight.C_POWER, b'\x00', light["mesh_id"])
@@ -204,20 +207,22 @@ def myParseStatusResult(self, message):
     for i, m in enumerate(struct.unpack('B'*len(message), message)):
         print("{:03d} ".format(m), end="")
     print("")
+    
     idR = struct.unpack('B', message[10:11])[0]
     idL = struct.unpack('B', message[19:20])[0]
-
     integer_meshid = (idL << 8) + idR
-    if integer_meshid not in lights.keys():
-        print("Need to set up light {}".format(integer_meshid))
-        lights[integer_meshid] = {"mesh_id": integer_meshid}
-        publish_discovery_message(lights[integer_meshid])
-        time.sleep(0.25)
-    light = lights[integer_meshid]
+
 
     mode = struct.unpack('B', message[12:13])[0]
-
     if mode < 40 and meshid == 0:  # filter some messages that return something else
+        if integer_meshid not in lights.keys():
+            print("Need to set up light {}".format(integer_meshid))
+            lights[integer_meshid] = {"mesh_id": integer_meshid}
+            publish_discovery_message(lights[integer_meshid])
+            # let homeassistant set up the device before sending state update
+            time.sleep(0.25)
+        light = lights[integer_meshid]
+
         light["mode"] = mode
         light["status"] = mode % 2
 
@@ -234,49 +239,40 @@ def myParseStatusResult(self, message):
 
 
 # ======
-try:
-    logger = logging.getLogger("awoxmeshlight")
-    logger.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    logger.addHandler(handler)
+logger = logging.getLogger("awoxmeshlight")
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+logger.addHandler(handler)
 
-    client = mqtt.Client()
-    client.username_pw_set("mosquitto", "protocol-supervision-failed")
-    client.on_connect = on_connect
-    client.on_message = on_message
+client = mqtt.Client()
+client.username_pw_set("mosquitto", "protocol-supervision-failed")
+client.on_connect = on_connect
+client.on_message = on_message
 
-    # Stehlampe
-    lightGateway = awoxmeshlight.AwoxMeshLight(
-        "a4:c1:38:5b:22:89", MESH_NAME, MESH_PASSWORD)
+# Stehlampe
+lightGateway = awoxmeshlight.AwoxMeshLight(
+    "a4:c1:38:5b:22:89", MESH_NAME, MESH_PASSWORD)
 
-    # apply own handler functions to the library light object
-    lightGateway.parseStatusResult = types.MethodType(
-        myParseStatusResult, lightGateway)
-    lightGateway.btdevice.delegate.handleNotification = types.MethodType(
-        myHandleNotification, lightGateway)  # TODO this does nothing.
+# apply own handler functions to the library light object
+lightGateway.parseStatusResult = types.MethodType(
+    myParseStatusResult, lightGateway)
+lightGateway.btdevice.delegate.handleNotification = types.MethodType(
+    myHandleNotification, lightGateway)  # TODO this does nothing.
 
-    client.connect("192.168.0.32", 1883, 60)
-    client.loop_start()
-    lightGateway.connect()
-    lights = {}
+client.connect("192.168.0.32", 1883, 60)
+lightGateway.connect()
+lights = {}
 
-    # publish_discovery_message should be called when the light is first added to the array of
-    # light states. If the light goes offline we handle it differently (we dont delete it from HA)
-    # publish_discovery_message(client, light)
-    while True:
-        try:
-            if lightGateway.btdevice.waitForNotifications(1.0):
-                continue
-        except Exception as e:
-            print("Error in loop:", e)
+# publish_discovery_message should be called when the light is first added to the array of
+# light states. If the light goes offline we handle it differently (we dont delete it from HA)
+# publish_discovery_message(client, light)
+while True:
+    try:
+        if lightGateway.btdevice.waitForNotifications(0.25):
+            continue
+    except Exception as e:
+        print("Error in loop:", e)
+        pass
 
-        time.sleep(0.25)
-
-finally:
-    print("Disconnecting.")
-    lightGateway.disconnect()
-    for mesh_id in lights.keys():
-        client.publish("homeassistant/light/{}/config".format(mesh_id, None))
-
-    client.disconnect()
+    client.loop(0.25)
