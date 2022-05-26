@@ -33,18 +33,28 @@ def publish_discovery_message(light):
             "rgb", "color_temp"
         ]
     }))
+    # let homeassistant set up the device before continuing
+    time.sleep(0.5)
 
 
 def match_message(message: mqtt.MQTTMessage):
-    topic_parts = message.topic.split("/")
-    print(topic_parts)
-    mesh_id = int(topic_parts[2])
-    if mesh_id in lights.keys():
+    t = message.topic.split("/")
+    print(t)
+    if len(t) == 2 and t[1] == "status":
+        if message.payload == b'online':
+            for light in lights.values():
+                # re-announce all lights
+                publish_discovery_message(light)
+                pub_state(light)
+        return
+    mesh_id = int(t[2])
+    if t[3] == "set" and mesh_id in lights.keys():
         light = lights[mesh_id]
 
         payload = json.loads(message.payload)
         print("Executing a command on {}:\n{}".format(light, payload))
         execute_command(light, payload)
+        return
 
 
 def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
@@ -157,6 +167,7 @@ def on_connect(client: mqtt.Client, userdata, flags, rc):
     print("Connected with result code "+str(rc))
 
     client.subscribe("homeassistant/light/+/set")
+    client.subscribe("homeassistant/status")
 
 
 def on_message(client: mqtt.Client, userdata, msg):
@@ -197,8 +208,6 @@ def myParseStatusResult(self, message):
             print("Need to set up light {}".format(integer_meshid))
             lights[integer_meshid] = {"mesh_id": integer_meshid}
             publish_discovery_message(lights[integer_meshid])
-            # let homeassistant set up the device before sending state update
-            time.sleep(0.25)
         light = lights[integer_meshid]
 
         light["mode"] = mode
