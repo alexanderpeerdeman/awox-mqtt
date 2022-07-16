@@ -1,6 +1,7 @@
 import json
 import logging
 import struct
+import time
 import types
 
 import awoxmeshlight
@@ -8,6 +9,7 @@ import bluepy
 import paho.mqtt.client as mqtt
 from awoxmeshlight import packetutils as pckt
 
+MAC_LIGHT_GATEWAY = "a4:c1:38:5b:22:89"
 BLE_MESH_NAME = "FDCqrGLE"
 BLE_MESH_PASSWORD = "3588b7f4"
 MQTT_BROKER_HOST = "192.168.0.32"
@@ -49,7 +51,7 @@ def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) 
     return max(new_value, min_to)
 
 
-def publish_state(light):
+def get_state(light) -> dict:
     if light["mode"] == 8 or light["mode"] == 9:
         brightness = convert_value_to_available_range(
             light["white_brightness"], 1, 127, 3, 255)
@@ -66,7 +68,7 @@ def publish_state(light):
     else:
         state = "OFF"
 
-    state_obj = {
+    state_dict = {
         "brightness": brightness,
         "color": {
             "r": light["red"],
@@ -78,20 +80,100 @@ def publish_state(light):
         "state": state
     }
 
-    payload = json.dumps(state_obj)
+    return state_dict
 
 
+def publish_state(light, payload):
     light_state_topic = "homeassistant/light/{}/state".format(light["mesh_id"])
-    logger.debug("PUB {}: {}".format(light_state_topic, state_obj))
-    mqtt_client.publish(light_state_topic, payload)
+    mqtt_client.publish(light_state_topic, json.dumps(payload))
+
+
+def calculate_difference(light, instruction):
+    differences = dict()
+
+    print()
+    print()
+    logger.info("##### Calculating differences... #####")
+    light_state = get_state(light)
+    logger.info("Light: {}".format(light_state))
+    logger.info("Payload: {}".format(instruction))
+
+    if "color_temp" in instruction.keys() and light_state["color_mode"] != "color_temp":
+        differences["brightness_w"] = instruction["brightness"]
+        differences["color_temp"] = instruction["color_temp"]
+        del instruction["brightness"]
+        del instruction["color_temp"]
+    elif "color" in instruction.keys() and light_state["color_mode"] != "rgb":
+        differences["brightness_c"] = instruction["brightness"]
+        differences["color"] = instruction["color"]
+        del instruction["brightness"]
+        del instruction["color"]
+
+    if "brightness" in instruction.keys():
+        if light_state["color_mode"] == "color_temp" and instruction["brightness"] != light_state["brightness"]:
+            differences["brightness_w"] = instruction["brightness"]
+            del instruction["brightness"]
+        elif light_state["color_mode"] == "rgb" and instruction["brightness"] != light_state["brightness"]:
+            differences["brightness_c"] = instruction["brightness"]
+            del instruction["brightness"]
+
+    for instruction_key, instruction_value in instruction.items():
+        if light_state[instruction_key] != instruction_value:
+            differences[instruction_key] = instruction_value
+
+    print("differences: {}".format(differences))
+    return differences
 
 
 def execute_command(light, payload):
-    logger.info("Light: {}".format(light))
-    try:
-        if "brightness" in payload:
-            if light["mode"] == 8 or light["mode"] == 9:
-                requested = payload["brightness"]
+    state_delta = calculate_difference(light, payload)
+
+    for key, value in state_delta.items():
+        logger.info("On light (meshid: {}), trying to set {} to {}.".format(
+            light["mesh_id"], key, value))
+        try:
+            if key == "state":
+                if value == "ON" and light["status"] == 0:
+                    logger.debug("turn on")
+                    lightGateway.writeCommand(
+                        awoxmeshlight.C_POWER, b'\x01', light["mesh_id"])
+
+                elif value == "OFF" and light["status"] == 1:
+                    logger.debug("turn off")
+                    lightGateway.writeCommand(
+                        awoxmeshlight.C_POWER, b'\x00', light["mesh_id"])
+
+                time.sleep(0.5)
+                continue
+
+            elif key == "color_temp":
+                logger.debug("set temp")
+                requestedTemp = value
+                adjustedTemp = convert_value_to_available_range(
+                    requestedTemp, 153, 500, 0, int(0x7f))
+                data = struct.pack('B', adjustedTemp)
+                lightGateway.writeCommand(
+                    awoxmeshlight.C_WHITE_TEMPERATURE, data, light["mesh_id"])
+
+                time.sleep(0.5)
+                continue
+
+            elif key == "color":
+                logger.debug("set color")
+                reqRed = value["r"]
+                reqGreen = value["g"]
+                reqBlue = value["b"]
+
+                data = struct.pack('BBBB', 0x04, reqRed, reqGreen, reqBlue)
+                lightGateway.writeCommand(
+                    awoxmeshlight.C_COLOR, data, light["mesh_id"])
+
+                time.sleep(0.5)
+                continue
+
+            elif key == "brightness_w":
+                logger.debug("set white brightness")
+                requested = value
                 adjusted = convert_value_to_available_range(
                     requested, 3, 255, 1, int(0x7f))
 
@@ -100,9 +182,13 @@ def execute_command(light, payload):
                 data = struct.pack('B', adjusted)
                 lightGateway.writeCommand(
                     awoxmeshlight.C_WHITE_BRIGHTNESS, data, light["mesh_id"])
-            else:
+
+                time.sleep(0.5)
+                continue
+
+            elif key == "brightness_c":
                 logger.debug("set color brightness")
-                requested = payload["brightness"]
+                requested = value
                 adjusted = convert_value_to_available_range(
                     requested, 0, 255, int(0xa), int(0x64))
 
@@ -110,45 +196,13 @@ def execute_command(light, payload):
                 lightGateway.writeCommand(
                     awoxmeshlight.C_COLOR_BRIGHTNESS, data, light["mesh_id"])
 
-        if "color_temp" in payload:
-            logger.debug("set temp")
-            requestedTemp = payload["color_temp"]
-            adjustedTemp = convert_value_to_available_range(
-                requestedTemp, 153, 500, 0, int(0x7f))
-            data = struct.pack('B', adjustedTemp)
-            lightGateway.writeCommand(
-                awoxmeshlight.C_WHITE_TEMPERATURE, data, light["mesh_id"])
+                time.sleep(0.5)
+                continue
 
-        if "color" in payload:
-            logger.debug("set color")
-            reqRed = payload["color"]["r"]
-            reqGreen = payload["color"]["g"]
-            reqBlue = payload["color"]["b"]
-            # adjRed = convert_value_to_available_range(
-            #     reqRed, 0, 255, 0, int(0xff))
-            # adjGreen = convert_value_to_available_range(
-            #     reqGreen, 0, 255, 0, int(0xff))
-            # adjBlue = convert_value_to_available_range(
-            #     reqBlue, 0, 255, 0, int(0xff))
-
-            # logger.debug("set color to ({},{},{}) (raw: ({},{},{}))".format(
-            #     adjRed, adjGreen, adjBlue, reqRed, reqGreen, reqBlue))
-
-            data = struct.pack('BBBB', 0x04, reqRed, reqGreen, reqBlue)
-            lightGateway.writeCommand(
-                awoxmeshlight.C_COLOR, data, light["mesh_id"])
-
-        if payload["state"] == "ON" and light["status"] == 0:
-            logger.debug("turn on")
-            lightGateway.writeCommand(
-                awoxmeshlight.C_POWER, b'\x01', light["mesh_id"])
-
-        if payload["state"] == "OFF" and light["status"] == 1:
-            logger.debug("turn off")
-            lightGateway.writeCommand(
-                awoxmeshlight.C_POWER, b'\x00', light["mesh_id"])
-    except bluepy.btle.BTLEInternalError as e:
-        print("Error while executing a command: {}".format(e))
+            else:
+                logger.warning("Not sure what to do with key '{}'".format(key))
+        except bluepy.btle.BTLEInternalError as e:
+            logger.info("Error while executing a command: {}".format(e))
 
 
 def on_connect(client: mqtt.Client, userdata, flags, rc):
@@ -166,7 +220,9 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
             # re-announce all lights
             for light in lights.values():
                 publish_discovery_message(light)
-                publish_state(light)
+                data_to_send = get_state(light)
+                publish_state(light, data_to_send)
+
         return
     mesh_id = int(sub_topics[2])
     if sub_topics[3] == "set" and mesh_id in lights.keys():
@@ -180,8 +236,7 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
 
 class MyDelegate(bluepy.btle.DefaultDelegate):
     def __init__(self):
-        bluepy.btle.DefaultDelegate.__init__(self)
-        # initialize here
+        pass
 
     def handleNotification(self, cHandle, data):
         try:
@@ -191,14 +246,17 @@ class MyDelegate(bluepy.btle.DefaultDelegate):
                 message = pckt.decrypt_packet(
                     self.light.session_key, self.light.mac, data)
             else:
-                logger.debug("Receiced notification from characteristic %s",
-                             char.uuid.getCommonName())
+                # logger.debug("Receiced notification from characteristic %s",
+                #              char.uuid.getCommonName())
                 message = pckt.decrypt_packet(
                     self.light.session_key, self.light.mac, data)
                 # logger.info("Received message : %s", repr(message))
                 self.light.parseStatusResult(message)
         except:
             pass
+
+    def handleDiscovery(self, scanEntry, isNewDev, isNewData):
+        return super().handleDiscovery(scanEntry, isNewDev, isNewData)
 
 
 def myParseStatusResult(self, message):
@@ -227,8 +285,9 @@ def myParseStatusResult(self, message):
         light["green"] = struct.unpack('B', message[17:18])[0]
         light["blue"] = struct.unpack('B', message[18:19])[0]
 
-        logger.info(json.dumps(light, indent=2, default=str))
-        publish_state(light)
+        state = get_state(light)
+        print(state)
+        publish_state(light, state)
 
 
 # ======
@@ -245,7 +304,7 @@ mqtt_client.on_message = on_message
 
 # Decke
 lightGateway = awoxmeshlight.AwoxMeshLight(
-    "a4:c1:38:35:d1:8c", BLE_MESH_NAME, BLE_MESH_PASSWORD)
+    MAC_LIGHT_GATEWAY, BLE_MESH_NAME, BLE_MESH_PASSWORD)
 
 # apply own handler functions to the library light object
 lightGateway.parseStatusResult = types.MethodType(
