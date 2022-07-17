@@ -25,13 +25,12 @@ def publish_discovery_message(light):
     config_topic = "homeassistant/light/{}/config".format(mesh_id)
     payload = json.dumps({
         "~": "homeassistant/light/{}".format(mesh_id),
-        # We dont know the lights names, that should be dealt with in HA.
         "name": mesh_id,
-        # Hopefully the unique id lets this config survive restarts of the mqtt script.
         "unique_id": "{}".format(mesh_id),
         "object_id": "{}".format(mesh_id),
         "command_topic": "~/set",
         "state_topic": "~/state",
+        "availability_topic": "~/availability",
         "schema": "json",
         "brightness": True,
         "color_mode": True,
@@ -77,13 +76,17 @@ def get_state(light) -> dict:
         },
         "color_mode": color_mode,
         "color_temp": color_temp,
-        "state": state
+        "state": state,
     }
 
     return state_dict
 
 
 def publish_state(light, payload):
+    light_availability_topic = "homeassistant/light/{}/availability".format(
+        light["mesh_id"])
+    mqtt_client.publish(light_availability_topic, light["availability"])
+
     light_state_topic = "homeassistant/light/{}/state".format(light["mesh_id"])
     mqtt_client.publish(light_state_topic, json.dumps(payload))
 
@@ -99,14 +102,10 @@ def calculate_difference(light, instruction):
     logger.info("Payload: {}".format(instruction))
 
     if "color_temp" in instruction.keys() and light_state["color_mode"] != "color_temp":
-        differences["brightness_w"] = instruction["brightness"]
         differences["color_temp"] = instruction["color_temp"]
-        del instruction["brightness"]
         del instruction["color_temp"]
     elif "color" in instruction.keys() and light_state["color_mode"] != "rgb":
-        differences["brightness_c"] = instruction["brightness"]
         differences["color"] = instruction["color"]
-        del instruction["brightness"]
         del instruction["color"]
 
     if "brightness" in instruction.keys():
@@ -235,10 +234,12 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
 
 
 class MyDelegate(bluepy.btle.DefaultDelegate):
-    def __init__(self):
-        pass
+    def __init__(self, light):
+        self.light = light
+        bluepy.btle.DefaultDelegate.__init__(self)
 
     def handleNotification(self, cHandle, data):
+        print("Here, my stuff happens")
         try:
             char = self.light.btdevice.getCharacteristics(cHandle)[0]
             if char.uuid == awoxmeshlight.STATUS_CHAR_UUID:
@@ -255,11 +256,12 @@ class MyDelegate(bluepy.btle.DefaultDelegate):
         except:
             pass
 
-    def handleDiscovery(self, scanEntry, isNewDev, isNewData):
-        return super().handleDiscovery(scanEntry, isNewDev, isNewData)
-
 
 def myParseStatusResult(self, message):
+    for i, m in enumerate(struct.unpack('B'*len(message), message)):
+        print("{:03d} ".format(m), end="")
+    print("")
+
     meshid = struct.unpack('B', message[3:4])[0]
 
     right_ID = struct.unpack('B', message[10:11])[0]
@@ -267,6 +269,7 @@ def myParseStatusResult(self, message):
     integer_meshid = (left_ID << 8) + right_ID
 
     mode = struct.unpack('B', message[12:13])[0]
+    availability = struct.unpack('B', message[11:12])[0]
     if mode < 40 and meshid == 0:  # filter some messages that return something else
         if integer_meshid not in lights.keys():
             logger.info("Need to set up light {}".format(integer_meshid))
@@ -276,6 +279,10 @@ def myParseStatusResult(self, message):
 
         light["mode"] = mode
         light["status"] = mode % 2
+        if availability > 0:
+            light["availability"] = "online"
+        else:
+            light["availability"] = "offline"
 
         light["white_brightness"] = struct.unpack('B', message[13:14])[0]
         light["white_temp"] = struct.unpack('B', message[14:15])[0]
@@ -285,8 +292,8 @@ def myParseStatusResult(self, message):
         light["green"] = struct.unpack('B', message[17:18])[0]
         light["blue"] = struct.unpack('B', message[18:19])[0]
 
+        print(light)
         state = get_state(light)
-        print(state)
         publish_state(light, state)
 
 
@@ -306,11 +313,12 @@ mqtt_client.on_message = on_message
 lightGateway = awoxmeshlight.AwoxMeshLight(
     MAC_LIGHT_GATEWAY, BLE_MESH_NAME, BLE_MESH_PASSWORD)
 
+lightGateway.btdevice.withDelegate(MyDelegate(lightGateway))
+
 # apply own handler functions to the library light object
 lightGateway.parseStatusResult = types.MethodType(
     myParseStatusResult, lightGateway)
 
-lightGateway.btdevice.setDelegate(MyDelegate())
 
 mqtt_client.connect(MQTT_BROKER_HOST)
 
