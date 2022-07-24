@@ -21,7 +21,8 @@ MQTT_BROKER = "192.168.0.32"
 MQTT_USER = "mosquitto"
 MQTT_PASSWD = "protocol-supervision-failed"
 
-COMMAND_SLEEP = 0
+COMMAND_SLEEP = 0.001
+
 
 class MyLight(object):
     def __init__(self, _id, _gateway, _mqttc):
@@ -42,49 +43,53 @@ class MyLight(object):
         self.blue = 0
 
     def setState(self, state):
-        changed = False
+        state_changed = False
+        availabilty_changed = False
         new_color_mode = self.modeFromNumerical(state["mode"])
         if self.color_mode != new_color_mode:
             self.color_mode = new_color_mode
-            changed = True
+            state_changed = True
 
         new_available = state["availability"] > 0
         if self.available != new_available:
             self.available = new_available
-            changed = True
+            self.publishAvailability()
+            availabilty_changed = True
 
         new_powerstate = "OFF" if state["status"] <= 0 else "ON"
         if self.powerstate != new_powerstate:
             self.powerstate = new_powerstate
-            changed = True
+            state_changed = True
 
         if self.white_brightness != state["white_brightness"]:
             self.white_brightness = state["white_brightness"]
-            changed = True
+            state_changed = True
 
         if self.white_temperature != state["white_temperature"]:
             self.white_temperature = state["white_temperature"]
-            changed = True
+            state_changed = True
 
         if self.color_brightness != state["color_brightness"]:
             self.color_brightness = state["color_brightness"]
-            changed = True
+            state_changed = True
 
         if self.red != state["red"]:
             self.red = state["red"]
-            changed = True
+            state_changed = True
 
         if self.green != state["green"]:
             self.green = state["green"]
-            changed = True
+            state_changed = True
 
         if self.blue != state["blue"]:
             self.blue = state["blue"]
-            changed = True
+            state_changed = True
 
-        if changed:
+        if state_changed:
             print("From notification.", end="")
             self.publishState()
+        elif availabilty_changed:
+            print("Availabilty changed.")
         else:
             print("Nothing changed.")
 
@@ -240,6 +245,13 @@ class MyLight(object):
         self.mqtt_client.publish(light_state_topic, json.dumps(payload))
         print("Publish state: {}".format(self))
 
+    def publishAvailability(self):
+        light_availability_topic = "homeassistant/light/{}/availability".format(
+            self.id)
+        payload = "online" if self.available else "offline"
+        self.mqtt_client.publish(light_availability_topic, payload)
+        print("Publish availability: ({}) {}".format(self.id, payload))
+
     def getState(self):
         if self.color_mode == "rgb":
             brightness = convert_value_to_available_range(
@@ -273,7 +285,8 @@ class MyLight(object):
             changed = self.setPowerstate(instruction["state"]) or changed
             # del instruction["state"]
         if "color_temp" in instruction.keys():
-            changed = self.setWhiteTemperature(instruction["color_temp"]) or changed
+            changed = self.setWhiteTemperature(
+                instruction["color_temp"]) or changed
             # del instruction["color_temp"]
         if "color" in instruction.keys():
             changed = self.setColor(instruction["color"]) or changed
