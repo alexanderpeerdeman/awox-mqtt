@@ -16,7 +16,7 @@ MQTT_BROKER = "192.168.0.32"
 MQTT_USER = "mosquitto"
 MQTT_PASSWD = "protocol-supervision-failed"
 
-COMMAND_SLEEP = 0.001
+COMMAND_SLEEP = 0.04
 
 
 class MyLight(object):
