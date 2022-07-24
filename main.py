@@ -1,17 +1,12 @@
-from contextlib import suppress
 import json
-from queue import Queue
-from re import S
 import struct
-from threading import Thread
-from time import sleep
-from turtle import colormode
 import typing
+from time import sleep
 
 import awoxmeshlight
-from bluepy import btle
 import paho.mqtt.client as mqtt
 from awoxmeshlight import packetutils as pckt
+from bluepy import btle
 
 MESH_GATEWAY = "a4:c1:38:5b:22:89"
 MESH_NAME = "FDCqrGLE"
