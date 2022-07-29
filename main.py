@@ -20,10 +20,10 @@ COMMAND_SLEEP = 0.04
 
 
 class MyLight(object):
-    def __init__(self, _id, _gateway, _mqttc):
+    def __init__(self, _id, _gateway, _mqttc: mqtt.Client):
         self.id = _id
         self.gateway = _gateway
-        self.mqtt_client = _mqttc
+        self.mqtt_client: mqtt.Client = _mqttc
 
         self.color_mode = "color_temp"
         self.available = True
@@ -85,6 +85,7 @@ class MyLight(object):
             self.publishState()
         elif availabilty_changed:
             print("Availabilty changed.")
+            self.publishAvailability()
         else:
             print("Nothing changed.")
 
@@ -244,7 +245,8 @@ class MyLight(object):
         light_availability_topic = "homeassistant/light/{}/availability".format(
             self.id)
         payload = "online" if self.available else "offline"
-        self.mqtt_client.publish(light_availability_topic, payload)
+        self.mqtt_client.publish(
+            light_availability_topic, payload, retain=True)
         print("Publish availability: ({}) {}".format(self.id, payload))
 
     def getState(self):
