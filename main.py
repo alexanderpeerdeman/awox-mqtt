@@ -1,3 +1,4 @@
+from curses import doupdate
 import json
 import struct
 import typing
@@ -37,7 +38,7 @@ class MyLight(object):
         self.green = 0
         self.blue = 0
 
-    def setState(self, state):
+    def setState(self, state, force_publish=False):
         state_changed = False
         availabilty_changed = False
         new_color_mode = self.modeFromNumerical(state["mode"])
@@ -80,14 +81,18 @@ class MyLight(object):
             self.blue = state["blue"]
             state_changed = True
 
-        if state_changed:
-            print("From notification.", end="")
+        if force_publish:
             self.publishState()
-        elif availabilty_changed:
-            print("Availabilty changed.")
             self.publishAvailability()
         else:
-            print("Nothing changed.")
+            if state_changed:
+                print("From notification.", end="")
+                self.publishState()
+            elif availabilty_changed:
+                print("Availabilty changed.")
+                self.publishAvailability()
+            else:
+                print("Nothing changed.")
 
         print(self)
 
@@ -371,9 +376,8 @@ class MyDelegate(btle.DefaultDelegate):
         light_id = state["id"]
         if light_id not in self.known_lights:
             new_light = MyLight(light_id, self.gateway, mqtt_client)
-            new_light.publishState()
-            new_light.publishAvailability()
             self.known_lights[light_id] = new_light
+            new_light.setState(state, force_publish=True)
         else:
             changed_light = self.known_lights[light_id]
             changed_light.setState(state)
