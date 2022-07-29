@@ -370,10 +370,13 @@ class MyDelegate(btle.DefaultDelegate):
     def applyState(self, state):
         light_id = state["id"]
         if light_id not in self.known_lights:
-            self.known_lights[light_id] = MyLight(
-                light_id, self.gateway, mqtt_client)
-        changed_light = self.known_lights[light_id]
-        changed_light.setState(state)
+            new_light = MyLight(light_id, self.gateway, mqtt_client)
+            new_light.publishState()
+            new_light.publishAvailability()
+            self.known_lights[light_id] = new_light
+        else:
+            changed_light = self.known_lights[light_id]
+            changed_light.setState(state)
 
     def parseMessage(self, message):
         unpacked = struct.unpack(20*'B', message)
