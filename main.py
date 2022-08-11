@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 from awoxmeshlight import packetutils as pckt
 from bluepy import btle
 
-MESH_GATEWAY = "a4:c1:38:5b:22:89"
+MESH_GATEWAY = "a4:c1:38:1a:ca:39"
 MESH_NAME = "FDCqrGLE"
 MESH_PASSWD = "3588b7f4"
 
@@ -37,6 +37,7 @@ class MyLight(object):
         self.red = 255
         self.green = 0
         self.blue = 0
+        self.publishConfigMessage()
 
     def setState(self, state, force_publish=False):
         state_changed = False
@@ -239,6 +240,27 @@ class MyLight(object):
             print("Unknown color_mode: {}".format(self.color_mode))
             return False
 
+    def publishConfigMessage(self):
+        config_topic = "homeassistant/light/{}/config".format(self.id)
+
+        discovery_message = {
+            "~": "homeassistant/light/{}".format(self.id),
+            "name": self.id,
+            "unique_id": "{}".format(self.id),
+            "object_id": "{}".format(self.id),
+            "command_topic": "~/set",
+            "state_topic": "~/state",
+            "availability_topic": "~/availability",
+            "schema": "json",
+            "brightness": True,
+            "color_mode": True,
+            "supported_color_modes": [
+                "rgb", "color_temp"
+            ]
+        }
+        self.mqtt_client.publish(config_topic, json.dumps(
+            discovery_message), retain=True)
+
     def publishState(self):
         light_state_topic = "homeassistant/light/{}/state".format(self.id)
 
@@ -300,27 +322,6 @@ class MyLight(object):
         if changed:
             print("From broker.", end="")
             self.publishState()
-
-
-def publish_discovery_message(light):
-    mesh_id = light["mesh_id"]
-    config_topic = "homeassistant/light/{}/config".format(mesh_id)
-    payload = json.dumps({
-        "~": "homeassistant/light/{}".format(mesh_id),
-        "name": mesh_id,
-        "unique_id": "{}".format(mesh_id),
-        "object_id": "{}".format(mesh_id),
-        "command_topic": "~/set",
-        "state_topic": "~/state",
-        "availability_topic": "~/availability",
-        "schema": "json",
-        "brightness": True,
-        "color_mode": True,
-        "supported_color_modes": [
-            "rgb", "color_temp"
-        ]
-    })
-    mqtt_client.publish(config_topic, payload, retain=True)
 
 
 def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
