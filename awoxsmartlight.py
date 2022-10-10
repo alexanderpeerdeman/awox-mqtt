@@ -3,17 +3,16 @@ import json
 import struct
 from time import sleep
 
-import awoxmeshlight
+import awoxmeshlight_bleak
 import paho.mqtt.client as mqtt
 
 COMMAND_SLEEP = 0.04
 
 
 class AwoXSmartLight(object):
-    def __init__(self, _id, _gateway, _mqttc: mqtt.Client):
+    def __init__(self, _name, _id):
+        self.name = _name
         self.id = _id
-        self.gateway = _gateway
-        self.mqtt_client: mqtt.Client = _mqttc
 
         self.color_mode = "color_temp"
         self.available = True
@@ -39,7 +38,7 @@ class AwoXSmartLight(object):
         new_available = state["availability"] > 0
         if self.available != new_available:
             self.available = new_available
-            self.publishAvailability()
+            self.publishAvailabilityMessage()
             availabilty_changed = True
 
         new_powerstate = "OFF" if state["status"] <= 0 else "ON"
@@ -72,15 +71,15 @@ class AwoXSmartLight(object):
             state_changed = True
 
         if force_publish:
-            self.publishState()
-            self.publishAvailability()
+            self.publishStateMessage()
+            self.publishAvailabilityMessage()
         else:
             if state_changed:
                 print("From notification.", end="")
-                self.publishState()
+                self.publishStateMessage()
             elif availabilty_changed:
                 print("Availabilty changed.")
-                self.publishAvailability()
+                self.publishAvailabilityMessage()
             else:
                 print("Nothing changed.")
 
@@ -104,139 +103,15 @@ class AwoXSmartLight(object):
             self.red, self.green, self.blue,
             self.color_mode)
 
-    def setPowerstate(self, value):
-        if self.powerstate != value:
-            if value == "ON":
-                self.gateway.writeCommand(
-                    awoxmeshlight.C_POWER, b'\x01', self.id)
-
-                self.powerstate = "ON"
-                print("Powerstate -> {}".format(value))
-                sleep(COMMAND_SLEEP)
-                return True
-            elif value == "OFF":
-                self.gateway.writeCommand(
-                    awoxmeshlight.C_POWER, b'\x00', self.id)
-
-                self.powerstate = "OFF"
-                print("Powerstate -> {}".format(value))
-                sleep(COMMAND_SLEEP)
-                return True
-            else:
-                print("Unknown value for powerstate: {}".format(value))
-                return False
-        else:
-            print("Already {}".format(self.powerstate))
-            return False
-
-    def setBrightness(self, value):
-        if self.color_mode == "rgb":
-            if self.color_brightness != value:
-                adjusted = convert_value_to_available_range(
-                    value, 3, 255, 1, 100)
-
-                data = struct.pack('B', adjusted)
-                self.gateway.writeCommand(
-                    awoxmeshlight.C_COLOR_BRIGHTNESS, data, self.id)
-                self.color_brightness = adjusted
-                print("CB -> {}".format(adjusted))
-                sleep(COMMAND_SLEEP)
-                return True
-            else:
-                print("Already CB of {}".format(self.color_brightness))
-                return False
-
-        elif self.color_mode == "color_temp":
-            if self.white_brightness != value:
-                adjusted = convert_value_to_available_range(
-                    value, 3, 255, 1, 127)
-
-                data = struct.pack('B', adjusted)
-                self.gateway.writeCommand(
-                    awoxmeshlight.C_WHITE_BRIGHTNESS, data, self.id)
-                self.white_brightness = adjusted
-                print("WB -> {}".format(adjusted))
-                sleep(COMMAND_SLEEP)
-                return True
-            else:
-                print("Already WB of {}".format(self.white_brightness))
-                return False
-        else:
-            print("Unknown color_mode: {}".format(self.color_mode))
-            return False
-
-    def setWhiteTemperature(self, temp):
-        if self.color_mode == "rgb":
-            adjusted = convert_value_to_available_range(temp, 153, 500, 0, 127)
-            data = struct.pack('B', adjusted)
-            self.gateway.writeCommand(
-                awoxmeshlight.C_WHITE_TEMPERATURE, data, self.id)
-            self.color_mode = "color_temp"
-            self.white_temperature = adjusted
-            print("CM -> {}, WT -> {}".format(self.color_mode, self.white_temperature))
-            sleep(COMMAND_SLEEP)
-            return True
-        elif self.color_mode == "color_temp":
-            if self.white_temperature != temp:
-                adjusted = convert_value_to_available_range(
-                    temp, 153, 500, 0, 127)
-                data = struct.pack('B', adjusted)
-                self.gateway.writeCommand(
-                    awoxmeshlight.C_WHITE_TEMPERATURE, data, self.id)
-                self.white_temperature = adjusted
-                print("WB -> {}".format(self.white_temperature))
-                sleep(COMMAND_SLEEP)
-                return True
-            else:
-                print("Already WT of {}".format(self.white_temperature))
-                return False
-        else:
-            print("Unknown color_mode: {}".format(self.color_mode))
-            return False
-
-    def setColor(self, rgb):
-        print("--->", rgb)
-        red = rgb["r"]
-        green = rgb["g"]
-        blue = rgb["b"]
-        if self.color_mode == "color_temp":
-            data = struct.pack('BBBB', 0x04, red, green, blue)
-            self.gateway.writeCommand(awoxmeshlight.C_COLOR, data, self.id)
-            self.color_mode = "rgb"
-            self.red = red
-            self.green = green
-            self.blue = blue
-            print("CM -> {}, RGB -> ({},{},{})".format(self.color_mode,
-                  self.red, self.green, self.blue))
-            sleep(COMMAND_SLEEP)
-            return True
-        elif self.color_mode == "rgb":
-            if self.red == red and self.green == green and self.blue == blue:
-                print("Already RGB of ({},{},{})".format(
-                    self.red, self.green, self.blue))
-                return False
-            else:
-                data = struct.pack('BBBB', 0x04, red, green, blue)
-                self.gateway.writeCommand(awoxmeshlight.C_COLOR, data, self.id)
-                self.red = red
-                self.green = green
-                self.blue = blue
-                print("RGB -> ({},{},{})".format(self.red, self.green, self.blue))
-                sleep(COMMAND_SLEEP)
-                return True
-
-        else:
-            print("Unknown color_mode: {}".format(self.color_mode))
-            return False
-
     def publishConfigMessage(self):
-        config_topic = "homeassistant/light/{}/config".format(self.id)
+        unique_id = "awox_{}".format(self.id)
+
+        config_topic = "homeassistant/light/{}/config".format(unique_id)
 
         discovery_message = {
-            "~": "homeassistant/light/{}".format(self.id),
-            "name": self.id,
-            "unique_id": "{}".format(self.id),
-            "object_id": "{}".format(self.id),
+            "~": "homeassistant/light/{}".format(unique_id),
+            "name": self.name,
+            "unique_id": "awox_{}".format(unique_id),
             "command_topic": "~/set",
             "state_topic": "~/state",
             "availability_topic": "~/availability",
@@ -250,14 +125,14 @@ class AwoXSmartLight(object):
         self.mqtt_client.publish(config_topic, json.dumps(
             discovery_message), retain=True)
 
-    def publishState(self):
+    def publishStateMessage(self):
         light_state_topic = "homeassistant/light/{}/state".format(self.id)
 
         payload = self.getState()
         self.mqtt_client.publish(light_state_topic, json.dumps(payload))
         print("Publish state: {}".format(self))
 
-    def publishAvailability(self):
+    def publishAvailabilityMessage(self):
         light_availability_topic = "homeassistant/light/{}/availability".format(
             self.id)
         payload = "online" if self.available else "offline"
@@ -290,33 +165,22 @@ class AwoXSmartLight(object):
 
         return state_dict
 
-    def execute_instruction(self, instruction):
+    def executeInstruction(self, instruction):
         changed = False
-        print(instruction)
 
         if "state" in instruction.keys():
             changed = self.setPowerstate(instruction["state"]) or changed
-            # del instruction["state"]
+
         if "color_temp" in instruction.keys():
             changed = self.setWhiteTemperature(
                 instruction["color_temp"]) or changed
-            # del instruction["color_temp"]
+
         if "color" in instruction.keys():
             changed = self.setColor(instruction["color"]) or changed
-            # del instruction["color"]
+
         if "brightness" in instruction.keys():
             changed = self.setBrightness(instruction["brightness"]) or changed
-            # del instruction["brightness"]
 
         if changed:
             print("From broker.", end="")
-            self.publishState()
-
-
-def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
-    normalized = (value - min_from) / (max_from - min_from)
-    new_value = min(
-        round((normalized * (max_to - min_to)) + min_to),
-        max_to,
-    )
-    return max(new_value, min_to)
+            self.publishStateMessage()

@@ -1,0 +1,268 @@
+[
+  {
+    "objectId": "PmFXWOfr8A",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "8089",
+    "displayName": "Stehlampe",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "bfss06KFVt"
+    },
+    "uuid": "0a8bf02a-a88b-3071-a41a-eadf9cc44815",
+    "version": "2.2.6",
+    "room": "Schlafzimmer",
+    "modelName": "ESMLm-c13g",
+    "macAddress": "a4:c1:38:68:1f:99",
+    "hardwareVersion": "1.1",
+    "syncable": true,
+    "friendlyName": "EGLOBulb",
+    "provider": "BLELight",
+    "vendor": "AwoxByEglo",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2022-08-09T23:24:11.372Z",
+    "updatedAt": "2022-08-09T23:31:03.399Z",
+    "ACL": {
+      "FDCqrGLEwP": {
+        "read": true,
+        "write": true
+      }
+    }
+  },
+  {
+    "objectId": "BJ3mm7z8Hd",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "8841",
+    "displayName": "Simons Schreibtisch",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "CIkeGLzwqn"
+    },
+    "uuid": "32947abf-21d1-33c2-a89b-cab3c8b072fb",
+    "version": "2.2.6",
+    "room": "Simon",
+    "modelName": "ESMLm-c9i",
+    "macAddress": "a4:c1:38:5b:22:89",
+    "hardwareVersion": "4.20",
+    "syncable": true,
+    "friendlyName": "EGLOBulb",
+    "provider": "BLELight",
+    "vendor": "AwoxByEglo",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2021-11-21T16:14:54.954Z",
+    "updatedAt": "2022-09-21T15:44:52.927Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "CUCOuVaYO5",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "19001",
+    "displayName": "Schrank",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "bfss06KFVt"
+    },
+    "uuid": "376819ee-4e7d-3710-80e4-ac585db8b0a4",
+    "version": "2.2.6",
+    "room": "Schlafzimmer",
+    "modelName": "SMLm-c5-E14",
+    "macAddress": "a4:c1:38:1a:ca:39",
+    "hardwareVersion": "5.0",
+    "syncable": true,
+    "friendlyName": "SmartLIGHTm",
+    "provider": "BLELight",
+    "vendor": "Awox",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2022-05-08T22:30:09.060Z",
+    "updatedAt": "2022-05-08T22:30:10.428Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "XIs7qTeAPw",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "9586",
+    "displayName": "Küche",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "iWfskYprFU"
+    },
+    "uuid": "485d94dd-06b0-3d3e-8ea5-060f343a2533",
+    "version": "2.2.6",
+    "room": "Küche",
+    "modelName": "ESMLm-c9i",
+    "macAddress": "a4:c1:38:46:a5:72",
+    "hardwareVersion": "4.20",
+    "syncable": true,
+    "friendlyName": "EGLOBulb",
+    "provider": "BLELight",
+    "vendor": "AwoxByEglo",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2022-06-25T11:24:31.782Z",
+    "updatedAt": "2022-06-25T11:31:33.648Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "CSaWbhp1RO",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "15148",
+    "displayName": "Schreibtisch",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "bfss06KFVt"
+    },
+    "uuid": "7665c0e3-edda-3492-ac54-b1cc4c9fb463",
+    "version": "2.2.6",
+    "room": "Schlafzimmer",
+    "modelName": "SMLm-c5-E14",
+    "macAddress": "a4:c1:38:1a:3b:2c",
+    "hardwareVersion": "5.0",
+    "syncable": true,
+    "friendlyName": "SmartLIGHTm",
+    "provider": "BLELight",
+    "vendor": "Awox",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2021-12-11T20:10:36.325Z",
+    "updatedAt": "2022-01-04T21:35:32.801Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "9kNcJWBJ2R",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "29691",
+    "displayName": "EGLORemote",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "J0pNE8ReOS"
+    },
+    "uuid": "8a7e8f98-c51c-3b1d-8789-eb486413f370",
+    "version": "2.4.4",
+    "room": "Büro",
+    "modelName": "ERCUm",
+    "macAddress": "a4:c1:38:74:73:fb",
+    "hardwareVersion": "3.0",
+    "syncable": true,
+    "friendlyName": "EGLORemote",
+    "provider": "",
+    "vendor": "Eglo",
+    "type": ".ble.tlmesh.sensor.rcu.",
+    "createdAt": "2022-05-08T21:44:29.956Z",
+    "updatedAt": "2022-05-08T21:44:53.528Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "20xESZenxP",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "19008",
+    "displayName": "EGLORemoteKüche",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "iWfskYprFU"
+    },
+    "uuid": "acecb1a3-19ba-3088-b6f8-92cfd9062824",
+    "version": "2.0.23",
+    "room": "Küche",
+    "modelName": "ERCUm",
+    "macAddress": "a4:c1:38:dc:4a:40",
+    "hardwareVersion": "2.0",
+    "syncable": true,
+    "friendlyName": "EGLORemote",
+    "provider": "",
+    "vendor": "Eglo",
+    "type": ".ble.tlmesh.sensor.rcu.",
+    "createdAt": "2022-07-16T13:24:09.519Z",
+    "updatedAt": "2022-07-16T13:24:22.548Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "j0N087MQAA",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "19289",
+    "displayName": "Backlight",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "bfss06KFVt"
+    },
+    "uuid": "d1a950fa-8261-315e-ad81-c1e2a781c002",
+    "version": "2.2.6",
+    "room": "Schlafzimmer",
+    "modelName": "EStrip_3m",
+    "macAddress": "a4:c1:38:a5:cb:59",
+    "hardwareVersion": "4.0",
+    "syncable": true,
+    "friendlyName": "EGLO Stripled",
+    "provider": "BLELight",
+    "vendor": "Eglo",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2021-01-21T22:40:07.449Z",
+    "updatedAt": "2022-01-04T21:35:03.142Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  },
+  {
+    "objectId": "Mjdiz1qxFI",
+    "owner": {
+      "__type": "Pointer",
+      "className": "_User",
+      "objectId": "FDCqrGLEwP"
+    },
+    "address": "20876",
+    "displayName": "Decke",
+    "typedRoom": {
+      "__type": "Pointer",
+      "className": "Room",
+      "objectId": "J0pNE8ReOS"
+    },
+    "uuid": "d813ff6b-73d4-360d-b60e-6435ed367aba",
+    "version": "2.2.6",
+    "room": "Büro",
+    "modelName": "EPanel-120-10",
+    "macAddress": "a4:c1:38:35:d1:8c",
+    "hardwareVersion": "4.0",
+    "syncable": true,
+    "friendlyName": "EGLOPanel",
+    "provider": "BLELight",
+    "vendor": "Eglo",
+    "type": ".ble.tlmesh.light.switch.white.dimming.temperature.color.",
+    "createdAt": "2019-10-02T07:28:43.852Z",
+    "updatedAt": "2022-04-22T19:30:38.353Z",
+    "ACL": { "FDCqrGLEwP": { "read": true, "write": true } }
+  }
+]
