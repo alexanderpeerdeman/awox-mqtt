@@ -1,10 +1,11 @@
-
-from bleak import BleakClient
-from . import packetutils as pckt
-
-from os import urandom
 import logging
 import struct
+from os import urandom
+from typing import Any, Callable
+
+from bluepy import btle
+
+from . import packetutils as pckt
 
 # Commands :
 
@@ -65,26 +66,6 @@ OTA_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d1913'
 logger = logging.getLogger(__name__)
 
 
-# class Delegate(btle.DefaultDelegate):
-#     def __init__(self, light):
-#         self.light = light
-#         btle.DefaultDelegate.__init__(self)
-
-#     def handleNotification(self, cHandle, data):
-#         char = self.light.btdevice.getCharacteristics(cHandle)[0]
-#         if char.uuid == STATUS_CHAR_UUID:
-#             logger.info("Notification on status char.")
-#             message = pckt.decrypt_packet(
-#                 self.light.session_key, self.light.mac, data)
-#         else:
-#             logger.info("Receiced notification from characteristic %s",
-#                         char.uuid.getCommonName())
-#             message = pckt.decrypt_packet(
-#                 self.light.session_key, self.light.mac, data)
-#             logger.info("Received message : %s", repr(message))
-#             self.light.parseStatusResult(message)
-
-
 class AwoxMeshLight:
     def __init__(self, mac, mesh_name="unpaired", mesh_password="1234"):
         """
@@ -95,23 +76,13 @@ class AwoxMeshLight:
         """
         self.mac = mac
         self.mesh_id = 0
-        self.btdevice: BleakClient = None
+        self.btdevice = btle.Peripheral()
         self.session_key = None
         self.command_char = None
         self.mesh_name = mesh_name.encode()
         self.mesh_password = mesh_password.encode()
 
-        # Light status
-        self.white_brightness = None
-        self.white_temp = None
-        self.color_brightness = None
-        self.red = None
-        self.green = None
-        self.blue = None
-        self.mode = None
-        self.status = None
-
-    async def connect(self, mesh_name=None, mesh_password=None):
+    def connect_with_callback(self, callback: Callable, mesh_name=None, mesh_password=None):
         """
         Args :
             mesh_name: The mesh name as a string.
@@ -126,47 +97,49 @@ class AwoxMeshLight:
         assert len(
             self.mesh_password) <= 16, "mesh_password can hold max 16 bytes"
 
-        self.btdevice = BleakClient(self.mac)
+        class DelegateNotification(btle.DefaultDelegate):
+            def __init__(self):
+                btle.DefaultDelegate.__init__(self)
 
-        await self.btdevice.connect()
-        # self.btdevice.setDelegate(Delegate(self))
+            def handleNotification(self, cHandle, data):
+                callback(cHandle, data)
 
-        pair_char = self.btdevice.services.get_characteristic(
-            specifier=PAIR_CHAR_UUID)
+        self.btdevice.connect(self.mac)
+        self.btdevice.setDelegate(DelegateNotification())
+
+        # send pair message
+        pair_char = self.btdevice.getCharacteristics(uuid=PAIR_CHAR_UUID)[0]
         self.session_random = urandom(8)
-
         message = pckt.make_pair_packet(
             self.mesh_name, self.mesh_password, self.session_random)
-        await self.btdevice.write_gatt_char(pair_char, message)
+        pair_char.write(message)
 
-        status_char = self.btdevice.services.get_characteristic(
-            specifier=STATUS_CHAR_UUID)
-        await self.btdevice.write_gatt_char(status_char, b'\x01')
+        # get status (?)
+        status_char = self.btdevice.getCharacteristics(
+            uuid=STATUS_CHAR_UUID)[0]
+        status_char.write(b'\x01')
 
-        reply = await self.btdevice.read_gatt_char(pair_char)
+        # read pairing reply
+        reply = bytearray(pair_char.read())
         if reply[0] == 0xd:
             self.session_key = pckt.make_session_key(self.mesh_name, self.mesh_password,
                                                      self.session_random, reply[1:9])
-            print("Connected.")
             logger.info("Connected.")
             return True
         else:
             if reply[0] == 0xe:
                 logger.info("Auth error : check name and password.")
-                print("Auth error : check name and password.")
             else:
                 logger.info("Unexpected pair value : %s", repr(reply))
-                print("Unexpected pair value : %s", repr(reply))
-            await self.disconnect()
+            self.disconnect()
             return False
 
-    async def writeCommand(self, command, data, dest=None):
+    def writeCommand(self, command, data, dest=None):
         """
         Args:
             command: The command, as a number.
             data: The parameters for the command, as bytes.
-            dest: The destination mesh id, as a number. If None, this lightbulb's
-                mesh id will be used.
+            dest: The destination mesh id, as a number. If None, this lightbulb's mesh id will be used.
         """
         assert (self.session_key)
         if dest == None:
@@ -175,60 +148,63 @@ class AwoxMeshLight:
             self.session_key, self.mac, dest, command, data)
 
         if not self.command_char:
-            self.command_char = self.btdevice.services.get_characteristic(
-                specifier=COMMAND_CHAR_UUID)
+            self.command_char = self.btdevice.getCharacteristics(uuid=COMMAND_CHAR_UUID)[
+                0]
 
         try:
             logger.info("[%s] Writing command %i data %s",
                         self.mac, command, repr(data))
-            await self.btdevice.write_gatt_char(self.command_char, packet)
+            self.command_char.write(packet)
         except:
             logger.info('[%s] (Re)load characteristics', self.mac)
-            self.command_char = self.btdevice.services.get_characteristic(
-                specifier=COMMAND_CHAR_UUID)
+            self.command_char = self.btdevice.getCharacteristics(uuid=COMMAND_CHAR_UUID)[
+                0]
             logger.info("[%s] Writing command %i data %s",
                         self.mac, command, repr(data))
-            await self.btdevice.write_gatt_char(self.command_char, packet)
+            self.command_char.write(packet)
 
-    async def readStatus(self):
-        status_char = self.btdevice.services.get_characteristic(
-            specifier=STATUS_CHAR_UUID)
-        packet = await self.btdevice.read_gatt_char(status_char)
+    def readStatus(self):
+        status_char = self.btdevice.getCharacteristics(
+            uuid=STATUS_CHAR_UUID)[0]
+        packet = status_char.read()
         return pckt.decrypt_packet(self.session_key, self.mac, packet)
 
-    async def setColor(self, red, green, blue):
+    def decrypt_packet(self, packet):
+        return pckt.decrypt_packet(self.session_key, self.mac, packet)
+
+    def setColor(self, red, green, blue, dest=None):
         """
         Args :
             red, green, blue: between 0 and 0xff
         """
         data = struct.pack('BBBB', 0x04, red, green, blue)
-        await self.writeCommand(C_COLOR, data)
+        self.writeCommand(C_COLOR, data, dest)
 
-    async def setColorBrightness(self, brightness):
+    def setColorBrightness(self, brightness, dest=None):
         """
         Args :
             brightness: a value between 0xa and 0x64 ...
         """
         data = struct.pack('B', brightness)
-        await self.writeCommand(C_COLOR_BRIGHTNESS, data)
+        self.writeCommand(C_COLOR_BRIGHTNESS, data, dest)
 
-    async def setSequenceColorDuration(self, duration):
+    def setSequenceColorDuration(self, duration, dest=None):
         """
         Args :
             duration: in milliseconds.
         """
         data = struct.pack("<I", duration)
-        await self.writeCommand(C_SEQUENCE_COLOR_DURATION, data)
+        self.writeCommand(C_SEQUENCE_COLOR_DURATION, data, dest)
 
-    async def setSequenceFadeDuration(self, duration):
+    def setSequenceFadeDuration(self, duration, dest=None):
         """
         Args:
             duration: in milliseconds.
         """
         data = struct.pack("<I", duration)
-        await self.writeCommand(C_SEQUENCE_FADE_DURATION, data)
+        self.writeCommand(C_SEQUENCE_FADE_DURATION, data, dest)
 
-    async def setPreset(self, num):
+    def setPreset(self, num, dest=None):
         """
         Set a preset color sequence.
 
@@ -236,50 +212,48 @@ class AwoxMeshLight:
             num: number between 0 and 6
         """
         data = struct.pack('B', num)
-        await self.writeCommand(C_PRESET, data)
+        self.writeCommand(C_PRESET, data, dest)
 
-    async def setWhiteBrightness(self, brightness):
+    def setWhiteBrightness(self, brightness, dest=None):
         """
         Args :
             brightness: between 1 and 0x7f
         """
         data = struct.pack('B', brightness)
-        await self.writeCommand(C_WHITE_BRIGHTNESS, data)
+        self.writeCommand(C_WHITE_BRIGHTNESS, data, dest)
 
-    async def setWhiteTemperature(self, brightness):
+    def setWhiteTemperature(self, brightness, dest=None):
         """
         Args :
             temp: between 0 and 0x7f
         """
         data = struct.pack('B', brightness)
-        await self.writeCommand(C_WHITE_TEMPERATURE, data)
+        self.writeCommand(C_WHITE_TEMPERATURE, data, dest)
 
-    async def setWhite(self, temp, brightness):
+    def setWhite(self, temp, brightness, dest=None):
         """
         Args :
             temp: between 0 and 0x7f
             brightness: between 1 and 0x7f
         """
         data = struct.pack('B', temp)
-        await self.writeCommand(C_WHITE_TEMPERATURE, data)
+        self.writeCommand(C_WHITE_TEMPERATURE, data, dest)
         data = struct.pack('B', brightness)
-        await self.writeCommand(C_WHITE_BRIGHTNESS, data)
+        self.writeCommand(C_WHITE_BRIGHTNESS, data, dest)
 
-    async def on(self):
+    def on(self, dest=None):
         """ Turns the light on.
         """
-        await self.writeCommand(C_POWER, b'\x01')
+        self.writeCommand(C_POWER, b'\x01', dest)
 
-    async def off(self):
+    def off(self, dest=None):
         """ Turns the light off.
         """
-        await self.writeCommand(C_POWER, b'\x00')
+        self.writeCommand(C_POWER, b'\x00', dest)
 
-    async def disconnect(self):
+    def disconnect(self):
         logger.info("Disconnecting.")
-        print("Disconnecting.")
-
-        await self.btdevice.disconnect()
+        self.btdevice.disconnect()
         self.session_key = None
 
     def getFirmwareRevision(self):
@@ -287,18 +261,24 @@ class AwoxMeshLight:
         Returns :
             The firmware version as a null terminated utf-8 string.
         """
-        return self.btdevice.read_gatt_char(char_specifier="00002a26-0000-1000-8000-00805f9b34fb")
+        char = self.btdevice.getCharacteristics(
+            uuid=btle.AssignedNumbers.firmwareRevisionString)[0]
+        return char.read()
 
     def getHardwareRevision(self):
         """
         Returns :
             The hardware version as a null terminated utf-8 string.
         """
-        return self.btdevice.read_gatt_char(char_specifier="00002a27-0000-1000-8000-00805f9b34fb")
+        char = self.btdevice.getCharacteristics(
+            uuid=btle.AssignedNumbers.hardwareRevisionString)[0]
+        return char.read()
 
     def getModelNumber(self):
         """
         Returns :
             The model as a null terminated utf-8 string.
         """
-        return self.btdevice.read_gatt_char(char_specifier="00002a24-0000-1000-8000-00805f9b34fb")
+        char = self.btdevice.getCharacteristics(
+            uuid=btle.AssignedNumbers.modelNumberString)[0]
+        return char.read()
