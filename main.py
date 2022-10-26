@@ -165,7 +165,7 @@ def main():
                 # publish config entry
                 config_payload = {
                     "~": base_topic,
-                    "name": "{} light".format(device["displayName"]),
+                    "name": "{}".format(device["displayName"]),
                     "device": {
                         "hw_version": device["hardwareVersion"],
                         "identifiers": [
