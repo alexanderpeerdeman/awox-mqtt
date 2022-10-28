@@ -1,10 +1,12 @@
 import json
+import queue
 import struct
-from bluepy import btle
+from threading import Thread
+from time import sleep
+
 import paho.mqtt.client as mqtt
 
 import awoxmeshlight_bluepy
-
 
 # MESH_GATEWAY = "A4:C1:38:1A:CA:39"  # Schrank
 # MESH_GATEWAY = "A4:C1:38:35:D1:8C"  # Decke
@@ -19,6 +21,8 @@ AWOX_CLOUD_FILENAME = "resp.json"
 MQTT_BROKER = "192.168.0.32"
 MQTT_USER = "mosquitto"
 MQTT_PASSWD = "protocol-supervision-failed"
+
+QUEUE_SLEEP = 0.0025
 
 
 def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
@@ -125,6 +129,8 @@ def get_device_from_file(lid):
 
 
 def main():
+    command_queue = queue.Queue()
+
     # set up light gateway
     light = awoxmeshlight_bluepy.AwoxMeshLight(
         MESH_GATEWAY, MESH_NAME, MESH_PASSWD)
@@ -147,6 +153,7 @@ def main():
 
             if found:
                 print("{}".format(name))
+                known_lights[lid]["color_mode"] = state["state"]["color_mode"]
             else:
                 device, found = get_device_from_file(lid)
                 if found:
@@ -213,29 +220,36 @@ def main():
 
     def setPowerstate(lid, instruction):
         if instruction == "OFF":
-            light.off(lid)
+            # light.off(lid)
+            command_queue.put((light.off, lid))
         else:
-            light.on(lid)
+            # light.on(lid)
+            command_queue.put((light.on, lid))
 
     def setBrightness(lid, instruction):
         if known_lights[lid]["color_mode"] == "rgb":
             adjusted = convert_value_to_available_range(
                 instruction, 3, 255, 1, 100)
-            light.setColorBrightness(adjusted, lid)
+            # light.setColorBrightness(adjusted, lid)
+
+            command_queue.put((light.setColorBrightness, adjusted, lid))
         else:
             adjusted = convert_value_to_available_range(
                 instruction, 3, 255, 1, 127)
-            light.setWhiteBrightness(adjusted, lid)
+            # light.setWhiteBrightness(adjusted, lid)
+            command_queue.put((light.setWhiteBrightness, adjusted, lid))
 
     def setWhiteTemperature(lid, instruction):
         adjusted = convert_value_to_available_range(
             instruction, 153, 500, 0, 127)
-        light.setWhiteTemperature(adjusted, lid)
+        # light.setWhiteTemperature(adjusted, lid)
+        command_queue.put((light.setWhiteTemperature, adjusted, lid))
         known_lights[lid]["color_mode"] = "color_temp"
 
     def setColor(lid, instruction):
         red, green, blue = instruction["r"], instruction["g"], instruction["b"]
-        light.setColor(red, green, blue, lid)
+        # light.setColor(red, green, blue, lid)
+        command_queue.put((light.setColor, red, green, blue, lid))
         known_lights[lid]["color_mode"] = "rgb"
 
     known_lights = dict()
@@ -267,18 +281,38 @@ def main():
     client.connect(MQTT_BROKER)
     print("Connected to broker.")
 
+    def do_broker():
+        client.loop_forever()
+
+    broker_thread = Thread(target=do_broker)
+    broker_thread.start()
+
     mqtt_topic = "homeassistant/light/+/set"
     client.subscribe(mqtt_topic)
     client.message_callback_add(mqtt_topic, handle_mqtt_message)
 
-    while True:
-        try:
-            light.btdevice.waitForNotifications(timeout=0.01)
-            client.loop_read()
-            client.loop_write()
-            client.loop_misc()
-        except btle.BTLEException as e:
-            print(e)
+    def process_queued_instruction():
+        while True:
+            light.btdevice.waitForNotifications(timeout=0.05)
+            try:
+                items = command_queue.get(timeout=0.01)
+
+            except queue.Empty:
+                continue
+
+            func = items[0]
+            args = items[1:]
+
+            print(">>>", func.__name__, *args)
+            func(*args)
+            sleep(QUEUE_SLEEP)
+
+    queue_thread = Thread(target=process_queued_instruction)
+    queue_thread.start()
+
+    print("Waiting for all threads to finish.")
+    broker_thread.join()
+    queue_thread.join()
 
 
 if __name__ == "__main__":
