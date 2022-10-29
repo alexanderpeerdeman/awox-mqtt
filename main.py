@@ -1,12 +1,15 @@
 import json
+import logging
 import queue
 import struct
 from threading import Thread
 from time import sleep
+from typing import Tuple
 
 import paho.mqtt.client as mqtt
 
 import awoxmeshlight_bluepy
+from data import Availability, ColorData, ColorMode, PowerState, StateData
 
 # MESH_GATEWAY = "A4:C1:38:1A:CA:39"  # Schrank
 # MESH_GATEWAY = "A4:C1:38:35:D1:8C"  # Decke
@@ -22,7 +25,9 @@ MQTT_BROKER = "192.168.0.32"
 MQTT_USER = "mosquitto"
 MQTT_PASSWD = "protocol-supervision-failed"
 
-QUEUE_SLEEP = 0.0025
+QUEUE_SLEEP = 0.025
+
+logger = logging.getLogger()
 
 
 def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) -> int:
@@ -35,15 +40,14 @@ def convert_value_to_available_range(value, min_from, max_from, min_to, max_to) 
 
 
 def modeFromNumerical(numerical):
-    # print("{:04d}".format(int(bin(mcode).replace("0b", ""))))
     mode = (numerical >> 1) % 2
     if mode == 0:
-        return "color_temp"
+        return ColorMode.COLOR_TEMP
     else:
-        return "rgb"
+        return ColorMode.RGB
 
 
-def parseMessage(message):
+def parseMessage(message) -> Tuple[int, Availability, StateData, bool]:
     unpacked = struct.unpack(20*'B', message)
 
     meshid_bytes = unpacked[3]
@@ -51,25 +55,25 @@ def parseMessage(message):
 
     # these messages represent something else
     if meshid_bytes != 0 or mode_bytes > 40:
-        print("Unknown message: {}".format(unpacked))
-        return None, False
+        logger.warning("Unknown message: {}".format(unpacked))
+        return 0, None, None, False
 
     # light id
     right_ID_bytes = unpacked[10]
     left_ID_bytes = unpacked[19]
-    light_id = (left_ID_bytes << 8) + right_ID_bytes
+    light_id = int((left_ID_bytes << 8) + right_ID_bytes)
 
     # availability
     if unpacked[11] > 0:
-        availability = "online"
+        availability = Availability.ONLINE
     else:
-        availability = "offline"
+        availability = Availability.OFFLINE
 
     # powerstate
     if (mode_bytes % 2) > 0:
-        powerstate = "ON"
+        powerstate = PowerState.ON
     else:
-        powerstate = "OFF"
+        powerstate = PowerState.OFF
 
     # color_mode
     color_mode = modeFromNumerical(mode_bytes)
@@ -87,7 +91,7 @@ def parseMessage(message):
         unpacked[15], 1, 100, 3, 255)
 
     # color_mode dependent brightness
-    if color_mode == "rgb":
+    if color_mode == ColorMode.RGB:
         brightness = color_brightness
     else:
         brightness = white_brightness
@@ -95,28 +99,17 @@ def parseMessage(message):
     # color
     red, green, blue = unpacked[16:19]
 
-    return {
-        "id": light_id,
-        "availability": availability,
-        "state": {
-            "brightness": brightness,
-            "color": {
-                "r": red,
-                "g": green,
-                "b": blue,
-            },
-            "color_mode": color_mode,
-            "color_temp": color_temperature,
-            "state": powerstate,
-        }
-    }, True
-
-
-def get_name(known_lights, lid):
-    if lid in known_lights.keys():
-        return known_lights[lid]["name"], True
-    else:
-        return None, False
+    return light_id, availability, StateData(
+        brightness=brightness,
+        color=ColorData(
+            r=red,
+            g=green,
+            b=blue
+        ),
+        color_mode=color_mode,
+        color_temp=color_temperature,
+        state=powerstate,
+    ), True
 
 
 def get_device_from_file(lid):
@@ -130,48 +123,50 @@ def get_device_from_file(lid):
 
 def main():
     command_queue = queue.Queue()
+    known_lights = dict()
 
     # set up light gateway
     light = awoxmeshlight_bluepy.AwoxMeshLight(
         MESH_GATEWAY, MESH_NAME, MESH_PASSWD)
-    print("Setup light.")
+    logger.info("Setup light.")
 
     # set up mqtt client
     client = mqtt.Client()
     client.username_pw_set(MQTT_USER, MQTT_PASSWD)
 
+    def publishState(lid: int, data: StateData):
+        client.publish(
+            "homeassistant/light/awox_{}/state".format(lid), data.json(), retain=True)
+
+    def publishAvailability(lid: int, availability: Availability):
+        client.publish("homeassistant/light/awox_{}/availability".format(
+            lid), availability.value, retain=True)
+
+    def publishConfig(lid: int, config_payload):
+        client.publish("homeassistant/light/awox_{}/config".format(lid),
+                       json.dumps(config_payload), retain=True)
+
     def handle_notification(_, data: bytearray):
         message = light.decrypt_packet(data)
-        state, ok = parseMessage(message)
+        lid, availability, parsed_state_data, ok = parseMessage(message)
         if ok:
-            lid = state["id"]
-            print("{}: ".format(lid), end="")
+            if not lid in known_lights:
+                known_lights[lid] = dict()
 
-            base_topic = "homeassistant/light/awox_{}".format(lid)
-
-            name, found = get_name(known_lights, lid)
-
-            if found:
-                print("{}".format(name))
-                known_lights[lid]["color_mode"] = state["state"]["color_mode"]
             else:
                 device, found = get_device_from_file(lid)
-                if found:
-                    print("{}".format(device["displayName"]))
-                else:
-                    print(
+                if not found:
+                    logger.error(
                         "No light with uid {} found in awox cloud data".format(lid))
                     return
 
                 # add to known lights
-                known_lights[lid] = {
-                    "name": device["displayName"],
-                    "color_mode": state["state"]["color_mode"],
-                }
+                name = device["displayName"]
+                known_lights[lid]["name"] = name
 
                 # publish config entry
                 config_payload = {
-                    "~": base_topic,
+                    "~": "homeassistant/light/awox_{}".format(lid),
                     "name": "{}".format(device["displayName"]),
                     "device": {
                         "hw_version": device["hardwareVersion"],
@@ -195,103 +190,168 @@ def main():
                     ]
                 }
 
+                # if we're not handling the gateway, add the via_device option to device info
                 if not lid == MESH_GATEWAY_LID:
                     config_payload["device"]["via_device"] = "awox_{}".format(
                         MESH_GATEWAY_LID)
 
-                config_topic = base_topic + "/config"
-                print("\tCONFIG {}".format(config_payload))
-                client.publish(config_topic, json.dumps(
-                    config_payload), retain=True)
+                publishConfig(lid, config_payload)
+
+            known_lights[lid]["availability"] = availability
+            known_lights[lid]["state"] = parsed_state_data
 
             # publish light availability
-            availability_topic = base_topic + "/availability"
-            print("\tAVAILABILITY {}".format(state["availability"]))
-            client.publish(availability_topic,
-                           state["availability"], retain=True)
+            publishAvailability(lid, availability)
 
             # publish light state
-            state_topic = base_topic + "/state"
-            print("\tSTATE {}".format(state["state"]))
-            client.publish(state_topic, json.dumps(
-                state["state"]), retain=True)
+            logger.info("(Notify) Publish state {}\t{}".format(
+                lid, parsed_state_data))
+            publishState(lid, parsed_state_data)
 
-            print()
-
-    def setPowerstate(lid, instruction):
-        if instruction == "OFF":
-            # light.off(lid)
+    def setPowerstate(lid, instruction: PowerState):
+        if instruction == PowerState.OFF:
             command_queue.put((light.off, lid))
-        else:
-            # light.on(lid)
+
+        elif instruction == PowerState.ON:
             command_queue.put((light.on, lid))
 
-    def setBrightness(lid, instruction):
-        if known_lights[lid]["color_mode"] == "rgb":
-            adjusted = convert_value_to_available_range(
-                instruction, 3, 255, 1, 100)
-            # light.setColorBrightness(adjusted, lid)
-
-            command_queue.put((light.setColorBrightness, adjusted, lid))
         else:
-            adjusted = convert_value_to_available_range(
-                instruction, 3, 255, 1, 127)
-            # light.setWhiteBrightness(adjusted, lid)
-            command_queue.put((light.setWhiteBrightness, adjusted, lid))
+            logger.error(
+                "Unknown power state intruction for {}: {}".format(lid, instruction))
+        known_lights[lid]["state"].state = instruction
 
-    def setWhiteTemperature(lid, instruction):
+    def setWhiteTemperature(lid, instruction: int):
         adjusted = convert_value_to_available_range(
             instruction, 153, 500, 0, 127)
-        # light.setWhiteTemperature(adjusted, lid)
+
         command_queue.put((light.setWhiteTemperature, adjusted, lid))
-        known_lights[lid]["color_mode"] = "color_temp"
+        known_lights[lid]["state"].state = PowerState.ON
+        known_lights[lid]["state"].color_mode = ColorMode.COLOR_TEMP
+        known_lights[lid]["state"].color_temp = instruction
 
-    def setColor(lid, instruction):
-        red, green, blue = instruction["r"], instruction["g"], instruction["b"]
-        # light.setColor(red, green, blue, lid)
-        command_queue.put((light.setColor, red, green, blue, lid))
-        known_lights[lid]["color_mode"] = "rgb"
+    def setColor(lid, col: ColorData):
+        command_queue.put((light.setColor, col.r, col.g, col.b, lid))
+        known_lights[lid]["state"].state = PowerState.ON
+        known_lights[lid]["state"].color_mode = ColorMode.RGB
+        known_lights[lid]["state"].color = col
 
-    known_lights = dict()
+    def setBrightness(lid, instruction: int):
+        if known_lights[lid]["state"].color_mode == ColorMode.RGB:
+            adjusted = convert_value_to_available_range(
+                instruction, 3, 255, 1, 100)
+
+            print(known_lights[lid]["state"].brightness, instruction, adjusted)
+
+            if not known_lights[lid]["state"].brightness == instruction:
+                command_queue.put((light.setColorBrightness, adjusted, lid))
+                known_lights[lid]["state"].state = PowerState.ON
+                known_lights[lid]["state"].color_mode = ColorMode.RGB
+                known_lights[lid]["state"].brightness = instruction
+
+        elif known_lights[lid]["state"].color_mode == ColorMode.COLOR_TEMP:
+            adjusted = convert_value_to_available_range(
+                instruction, 3, 255, 1, 127)
+
+            if not known_lights[lid]["state"].brightness == instruction:
+                command_queue.put((light.setWhiteBrightness, adjusted, lid))
+                known_lights[lid]["state"].state = PowerState.ON
+                known_lights[lid]["state"].color_mode = ColorMode.COLOR_TEMP
+                known_lights[lid]["state"].brightness = instruction
+
+        else:
+            logger.error("Unknown color mode for {}: {}".format(
+                lid, known_lights[lid]["state"].color_mode))
+
     light.connect_with_callback(handle_notification)
 
-    def handle_mqtt_message(client, userdata, message):
-        print("Got message: {} - {}".format(message.topic, message.payload))
-
+    def handle_mqtt_set_message(client, userdata, message):
         topic_hierarchy = message.topic.split("/")
         light_uuid = topic_hierarchy[2]
+        if not str(light_uuid).startswith("awox_"):
+            return
 
         instruction = json.loads(message.payload)
-        print("Apply {} to {}".format(instruction, light_uuid))
+        logger.info("Set {}: {}".format(light_uuid, instruction))
         lid = int(light_uuid[5:])  # cut away awox_ part
 
-        if "state" in instruction.keys():
-            setPowerstate(lid, instruction["state"])
+        if "state" in instruction.keys() and len(instruction.keys()) == 1:
+            setPowerstate(lid, PowerState(instruction["state"]))
 
         if "color_temp" in instruction.keys():
-            setWhiteTemperature(lid, instruction["color_temp"])
+            setWhiteTemperature(lid, int(instruction["color_temp"]))
 
         if "color" in instruction.keys():
-            setColor(lid, instruction["color"])
+            col = instruction["color"]
+            setColor(lid, ColorData(col["r"], col["g"], col["b"]))
 
         if "brightness" in instruction.keys():
-            setBrightness(lid, instruction["brightness"])
+            setBrightness(lid, int(instruction["brightness"]))
+
+        logger.info("(Create) Publish state {}\t{}".format(
+            lid, known_lights[lid]["state"]))
+        publishState(lid, known_lights[lid]["state"])
+
+    def handle_mqtt_state_message(client, userdata, message):
+        topic_hierarchy = message.topic.split("/")
+        light_uuid = topic_hierarchy[2]
+        if not str(light_uuid).startswith("awox_"):
+            return
+
+        state = json.loads(message.payload)
+        lid = int(light_uuid[5:])  # cut away awox_ part
+
+        state_data = StateData(
+            brightness=state["brightness"],
+            color=ColorData(
+                r=state["color"]["r"],
+                g=state["color"]["g"],
+                b=state["color"]["b"],
+            ),
+            color_mode=ColorMode(state["color_mode"]),
+            color_temp=state["color_temp"],
+            state=PowerState(state["state"])
+        )
+
+        if not lid in known_lights:
+            known_lights[lid] = dict()
+        known_lights[lid]["state"] = state_data
+
+    def handle_mqtt_availability_message(client, userdata, message: mqtt.MQTTMessage):
+        topic_hierarchy = message.topic.split("/")
+        light_uuid = topic_hierarchy[2]
+        if not str(light_uuid).startswith("awox_"):
+            return
+
+        availability = Availability(message.payload.decode())
+        lid = int(light_uuid[5:])  # cut away awox_ part
+
+        if not lid in known_lights:
+            known_lights[lid] = dict()
+        known_lights[lid]["availability"] = availability
 
     # connect to broker
     client.connect(MQTT_BROKER)
-    print("Connected to broker.")
+    logger.info("Connected to broker.")
 
-    def do_broker():
+    def process_broker():
         client.loop_forever()
 
-    broker_thread = Thread(target=do_broker)
+    broker_thread = Thread(target=process_broker)
     broker_thread.start()
 
     mqtt_topic = "homeassistant/light/+/set"
     client.subscribe(mqtt_topic)
-    client.message_callback_add(mqtt_topic, handle_mqtt_message)
+    client.message_callback_add(mqtt_topic, handle_mqtt_set_message)
 
-    def process_queued_instruction():
+    mqtt_topic = "homeassistant/light/+/state"
+    client.subscribe(mqtt_topic)
+    client.message_callback_add(mqtt_topic, handle_mqtt_state_message)
+
+    mqtt_topic = "homeassistant/light/+/availability"
+    client.subscribe(mqtt_topic)
+    client.message_callback_add(mqtt_topic, handle_mqtt_availability_message)
+
+    def process_bluetooth():
         while True:
             light.btdevice.waitForNotifications(timeout=0.05)
             try:
@@ -303,17 +363,16 @@ def main():
             func = items[0]
             args = items[1:]
 
-            print(">>>", func.__name__, *args)
             func(*args)
             sleep(QUEUE_SLEEP)
 
-    queue_thread = Thread(target=process_queued_instruction)
-    queue_thread.start()
+    bluetooth_thread = Thread(target=process_bluetooth)
+    bluetooth_thread.start()
 
-    print("Waiting for all threads to finish.")
     broker_thread.join()
-    queue_thread.join()
+    bluetooth_thread.join()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     main()
