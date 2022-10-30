@@ -218,8 +218,8 @@ def main():
             if availability == Availability.OFFLINE:
                 process = known_lights[lid]["availabilityProcess"]
                 if not isinstance(process, Process):
-                    seconds = 10
-                    print("Got OFFLINE {}. Waiting {} seconds to see it it comes back online again".format(
+                    seconds = 20
+                    logger.info("Got {}: OFFLINE. Scheduling offline message to be published in {} seconds.".format(
                         lid, seconds))
                     known_lights[lid]["availabilityProcess"] = Process(
                         target=_schedule_worker, args=(seconds, lid, availability))
@@ -227,8 +227,8 @@ def main():
             if availability == Availability.ONLINE:
                 process = known_lights[lid]["availabilityProcess"]
                 if isinstance(process, Process) and process.is_alive():
-                    print(
-                        "all good, light {} came back online again, killing process".format(lid))
+                    logger.info(
+                        "Light {} came back online again. Cancelling publish".format(lid))
                     process.kill()
                     known_lights[lid]["availabilityProcess"] = None
                 else:
@@ -270,8 +270,6 @@ def main():
         if known_lights[lid]["state"].color_mode == ColorMode.RGB:
             adjusted = convert_value_to_available_range(
                 instruction, 3, 255, 1, 100)
-
-            print(known_lights[lid]["state"].brightness, instruction, adjusted)
 
             if not known_lights[lid]["state"].brightness == instruction:
                 command_queue.put((light.setColorBrightness, adjusted, lid))
