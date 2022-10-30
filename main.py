@@ -1,5 +1,7 @@
+from ast import parse
 import json
 import logging
+from multiprocessing import Process
 import queue
 import struct
 from threading import Thread
@@ -11,10 +13,13 @@ import paho.mqtt.client as mqtt
 import awoxmeshlight_bluepy
 from data import Availability, ColorData, ColorMode, PowerState, StateData
 
-# MESH_GATEWAY = "A4:C1:38:1A:CA:39"  # Schrank
+# Schrank
+MESH_GATEWAY = "A4:C1:38:1A:CA:39"
+MESH_GATEWAY_LID = 19001
+
 # MESH_GATEWAY = "A4:C1:38:35:D1:8C"  # Decke
-MESH_GATEWAY = "A4:C1:38:1A:3B:2C"  # Schreibtisch
-MESH_GATEWAY_LID = int(MESH_GATEWAY.replace(":", "")[8:], 16)
+# MESH_GATEWAY = "A4:C1:38:1A:3B:2C"  # Schreibtisch
+
 MESH_NAME = "FDCqrGLE"
 MESH_PASSWD = "3588b7f4"
 
@@ -143,17 +148,19 @@ def main():
             lid), availability.value, retain=True)
 
     def publishConfig(lid: int, config_payload):
+        logger.info("Publish config: {}".format(lid))
         client.publish("homeassistant/light/awox_{}/config".format(lid),
                        json.dumps(config_payload), retain=True)
 
     def handle_notification(_, data: bytearray):
         message = light.decrypt_packet(data)
         lid, availability, parsed_state_data, ok = parseMessage(message)
+
         if ok:
             if not lid in known_lights:
                 known_lights[lid] = dict()
 
-            else:
+            if not "name" in known_lights[lid]:
                 device, found = get_device_from_file(lid)
                 if not found:
                     logger.error(
@@ -200,8 +207,32 @@ def main():
             known_lights[lid]["availability"] = availability
             known_lights[lid]["state"] = parsed_state_data
 
+            if not "availabilityProcess" in known_lights[lid]:
+                known_lights[lid]["availabilityProcess"] = None
+
+            def _schedule_worker(seconds, lid, availability):
+                sleep(seconds)
+                publishAvailability(lid, availability)
+
             # publish light availability
-            publishAvailability(lid, availability)
+            if availability == Availability.OFFLINE:
+                process = known_lights[lid]["availabilityProcess"]
+                if not isinstance(process, Process):
+                    seconds = 10
+                    print("Got OFFLINE {}. Waiting {} seconds to see it it comes back online again".format(
+                        lid, seconds))
+                    known_lights[lid]["availabilityProcess"] = Process(
+                        target=_schedule_worker, args=(seconds, lid, availability))
+                    known_lights[lid]["availabilityProcess"].start()
+            if availability == Availability.ONLINE:
+                process = known_lights[lid]["availabilityProcess"]
+                if isinstance(process, Process) and process.is_alive():
+                    print(
+                        "all good, light {} came back online again, killing process".format(lid))
+                    process.kill()
+                    known_lights[lid]["availabilityProcess"] = None
+                else:
+                    publishAvailability(lid, availability)
 
             # publish light state
             logger.info("(Notify) Publish state {}\t{}".format(
