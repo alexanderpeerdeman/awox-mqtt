@@ -9,6 +9,7 @@ from time import sleep
 from typing import Optional, Tuple
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 
 import awoxmeshlight_bluepy
 from data import Availability, ColorData, ColorMode, PowerState, StateData
@@ -136,7 +137,7 @@ def main():
     logger.info("Setup light.")
 
     # set up mqtt client
-    client = mqtt.Client()
+    client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION2)
     client.username_pw_set(MQTT_USER, MQTT_PASSWD)
 
     def publishState(lid: int, data: Optional[StateData]):
