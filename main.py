@@ -152,7 +152,7 @@ def main():
     def publishConfig(lid: int, config_payload):
         logger.info("Publish config: {}".format(lid))
         client.publish("homeassistant/light/awox_{}/config".format(lid),
-                       json.dumps(config_payload), retain=True)
+                       json.dumps(config_payload, ensure_ascii=False), retain=True)
 
     def handle_notification(_, data: bytearray):
         message = light.decrypt_packet(data)
