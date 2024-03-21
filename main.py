@@ -6,7 +6,7 @@ import queue
 import struct
 from threading import Thread
 from time import sleep
-from typing import Tuple
+from typing import Optional, Tuple
 
 import paho.mqtt.client as mqtt
 
@@ -52,7 +52,7 @@ def modeFromNumerical(numerical):
         return ColorMode.RGB
 
 
-def parseMessage(message) -> Tuple[int, Availability, StateData, bool]:
+def parseMessage(message) -> Tuple[int, Optional[Availability], Optional[StateData], bool]:
     unpacked = struct.unpack(20*'B', message)
 
     meshid_bytes = unpacked[3]
@@ -118,12 +118,12 @@ def parseMessage(message) -> Tuple[int, Availability, StateData, bool]:
 
 
 def get_device_from_file(lid):
-    with open(AWOX_CLOUD_FILENAME, "r") as file:
+    with open(AWOX_CLOUD_FILENAME, "r", encoding='utf-8') as file:
         devices = json.loads(file.read())
         for device in devices:
             if int(device["address"]) == int(lid):
-                return device, True
-    return None, False
+                return device
+    return None
 
 
 def main():
@@ -139,9 +139,10 @@ def main():
     client = mqtt.Client()
     client.username_pw_set(MQTT_USER, MQTT_PASSWD)
 
-    def publishState(lid: int, data: StateData):
-        client.publish(
-            "homeassistant/light/awox_{}/state".format(lid), data.json(), retain=True)
+    def publishState(lid: int, data: Optional[StateData]):
+        if data:
+            client.publish(
+                "homeassistant/light/awox_{}/state".format(lid), data.json(), retain=True)
 
     def publishAvailability(lid: int, availability: Availability):
         client.publish("homeassistant/light/awox_{}/availability".format(
@@ -161,8 +162,8 @@ def main():
                 known_lights[lid] = dict()
 
             if not "name" in known_lights[lid]:
-                device, found = get_device_from_file(lid)
-                if not found:
+                device = get_device_from_file(lid)
+                if device is None:
                     logger.error(
                         "No light with uid {} found in awox cloud data".format(lid))
                     return
