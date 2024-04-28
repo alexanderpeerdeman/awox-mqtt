@@ -1,7 +1,7 @@
 import logging
 import struct
 from os import urandom
-from typing import Any, Callable
+from typing import Callable
 
 from bluepy import btle
 
@@ -57,10 +57,10 @@ C_TIME = 0xe4
 C_ALARMS = 0xe5
 
 
-PAIR_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d1914'
-COMMAND_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d1912'
-STATUS_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d1911'
-OTA_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d1913'
+CHARACTERISTIC_UUID_PAIR = '00010203-0405-0607-0809-0a0b0c0d1914'
+CHARACTERISTIC_UUID_COMMAND = '00010203-0405-0607-0809-0a0b0c0d1912'
+CHARACTERISTIC_UUID_STATUS = '00010203-0405-0607-0809-0a0b0c0d1911'
+CHARACTERISTIC_UUID_OTA = '00010203-0405-0607-0809-0a0b0c0d1913'
 
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class AwoxMeshLight:
         self.mesh_id = 0
         self.btdevice = btle.Peripheral()
         self.session_key = None
-        self.command_char = None
+        self.command_characteristic = None
         self.mesh_name = mesh_name.encode()
         self.mesh_password = mesh_password.encode()
 
@@ -104,23 +104,24 @@ class AwoxMeshLight:
             def handleNotification(self, cHandle, data):
                 callback(cHandle, data)
 
-        self.btdevice.connect(self.mac)
         self.btdevice.setDelegate(DelegateNotification())
+        self.btdevice.connect(self.mac)
 
         # send pair message
-        pair_char = self.btdevice.getCharacteristics(uuid=PAIR_CHAR_UUID)[0]
+        pair_characteristic = self.btdevice.getCharacteristics(
+            uuid=CHARACTERISTIC_UUID_PAIR)[0]
         self.session_random = urandom(8)
         message = pckt.make_pair_packet(
             self.mesh_name, self.mesh_password, self.session_random)
-        pair_char.write(message)
+        pair_characteristic.write(message)
 
         # get status (?)
-        status_char = self.btdevice.getCharacteristics(
-            uuid=STATUS_CHAR_UUID)[0]
-        status_char.write(b'\x01')
+        status_characteristic = self.btdevice.getCharacteristics(
+            uuid=CHARACTERISTIC_UUID_STATUS)[0]
+        status_characteristic.write(b'\x01')
 
         # read pairing reply
-        reply = bytearray(pair_char.read())
+        reply = bytearray(pair_characteristic.read())
         if reply[0] == 0xd:
             self.session_key = pckt.make_session_key(self.mesh_name, self.mesh_password,
                                                      self.session_random, reply[1:9])
@@ -128,9 +129,9 @@ class AwoxMeshLight:
             return True
         else:
             if reply[0] == 0xe:
-                logger.info("Auth error : check name and password.")
+                logger.info("Auth error: check name and password.")
             else:
-                logger.info("Unexpected pair value : %s", repr(reply))
+                logger.info("Unexpected pair value: %s", repr(reply))
             self.disconnect()
             return False
 
@@ -147,26 +148,26 @@ class AwoxMeshLight:
         packet = pckt.make_command_packet(
             self.session_key, self.mac, dest, command, data)
 
-        if not self.command_char:
-            self.command_char = self.btdevice.getCharacteristics(uuid=COMMAND_CHAR_UUID)[
+        if not self.command_characteristic:
+            self.command_characteristic = self.btdevice.getCharacteristics(uuid=CHARACTERISTIC_UUID_COMMAND)[
                 0]
 
         try:
             logger.info("[%s] Writing command %i data %s",
                         self.mac, command, repr(data))
-            self.command_char.write(packet)
+            self.command_characteristic.write(packet)
         except:
             logger.info('[%s] (Re)load characteristics', self.mac)
-            self.command_char = self.btdevice.getCharacteristics(uuid=COMMAND_CHAR_UUID)[
+            self.command_characteristic = self.btdevice.getCharacteristics(uuid=CHARACTERISTIC_UUID_COMMAND)[
                 0]
             logger.info("[%s] Writing command %i data %s",
                         self.mac, command, repr(data))
-            self.command_char.write(packet)
+            self.command_characteristic.write(packet)
 
     def readStatus(self):
-        status_char = self.btdevice.getCharacteristics(
-            uuid=STATUS_CHAR_UUID)[0]
-        packet = status_char.read()
+        status_characteristic = self.btdevice.getCharacteristics(
+            uuid=CHARACTERISTIC_UUID_STATUS)[0]
+        packet = status_characteristic.read()
         return pckt.decrypt_packet(self.session_key, self.mac, packet)
 
     def decrypt_packet(self, packet):
@@ -261,8 +262,7 @@ class AwoxMeshLight:
         Returns :
             The firmware version as a null terminated utf-8 string.
         """
-        char = self.btdevice.getCharacteristics(
-            uuid=btle.AssignedNumbers.firmwareRevisionString)[0]
+        char = self.btdevice.getCharacteristics(uuid=0x2A26)[0]
         return char.read()
 
     def getHardwareRevision(self):
@@ -270,8 +270,7 @@ class AwoxMeshLight:
         Returns :
             The hardware version as a null terminated utf-8 string.
         """
-        char = self.btdevice.getCharacteristics(
-            uuid=btle.AssignedNumbers.hardwareRevisionString)[0]
+        char = self.btdevice.getCharacteristics(uuid=0x2A27)[0]
         return char.read()
 
     def getModelNumber(self):
@@ -279,6 +278,5 @@ class AwoxMeshLight:
         Returns :
             The model as a null terminated utf-8 string.
         """
-        char = self.btdevice.getCharacteristics(
-            uuid=btle.AssignedNumbers.modelNumberString)[0]
+        char = self.btdevice.getCharacteristics(uuid=0x2A24)[0]
         return char.read()
