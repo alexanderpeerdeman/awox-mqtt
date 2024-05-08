@@ -31,8 +31,8 @@ MQTT_USER = "mosquitto"
 MQTT_PASSWD = "protocol-supervision-failed"
 
 QUEUE_SLEEP_DURATION = datetime.timedelta(milliseconds=25)
-BTDEVICE_NOTIFICATION_TIMEOUT = datetime.timedelta(milliseconds=5)
-COMMAND_QUEUE_TIMEOUT = datetime.timedelta(milliseconds=1)
+BTDEVICE_NOTIFICATION_TIMEOUT = datetime.timedelta(milliseconds=50)
+COMMAND_QUEUE_TIMEOUT = datetime.timedelta(milliseconds=10)
 
 logger = logging.getLogger()
 
