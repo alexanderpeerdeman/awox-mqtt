@@ -234,12 +234,9 @@ def main():
             light_id, light_name, availability))
         # got "unavailable" message
         if availability == Availability.OFFLINE:
-            process = known_light_ids[light_id]["availabilityProcess"]
-
-            if not isinstance(process, Process):
-                known_light_ids[light_id]["availabilityProcess"] = Process(
-                    target=_publish_availability_after_delay, args=(NO_RESPONSE_TIMEOUT, light_id, light_name, availability))
-                known_light_ids[light_id]["availabilityProcess"].start()
+            known_light_ids[light_id]["availabilityProcess"] = Process(
+                target=_publish_availability_after_delay, args=(NO_RESPONSE_TIMEOUT, light_id, light_name, availability))
+            known_light_ids[light_id]["availabilityProcess"].start()
 
         if availability == Availability.ONLINE:
             process = known_light_ids[light_id]["availabilityProcess"]
