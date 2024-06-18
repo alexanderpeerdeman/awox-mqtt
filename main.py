@@ -230,6 +230,8 @@ def main():
             publishAvailability(light_id, availability)
             known_light_ids[light_id]["availabilityProcess"] = None
 
+        logger.info("Light {} ({}): Availability: {}".format(
+            light_id, light_name, availability))
         # got "unavailable" message
         if availability == Availability.OFFLINE:
             process = known_light_ids[light_id]["availabilityProcess"]
