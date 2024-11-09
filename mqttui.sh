@@ -1,1 +1,1 @@
-mqttui --broker mqtt://192.168.0.32 --username mosquitto --password protocol-supervision-failed
+mqttui --broker mqtt://MQTT_BROKER --username MQTT_USER --password MQTT_PASSWD

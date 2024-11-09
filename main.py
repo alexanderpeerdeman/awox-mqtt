@@ -1,9 +1,11 @@
+import os
 import datetime
 import json
 import logging
 from multiprocessing import Process
 import queue
 import struct
+from dotenv import load_dotenv
 from threading import Thread
 from time import sleep
 from typing import Optional, Tuple
@@ -13,23 +15,6 @@ from paho.mqtt.enums import CallbackAPIVersion
 
 import awoxmeshlight_bluepy
 from data import Availability, ColorData, ColorMode, PowerState, StateData
-
-# Schrank
-MESH_GATEWAY = "A4:C1:38:1A:CA:39"
-MESH_GATEWAY_LIGHTID = 19001
-
-# MESH_GATEWAY = "A4:C1:38:35:D1:8C"  # Decke
-# MESH_GATEWAY = "A4:C1:38:1A:3B:2C"  # Schreibtisch
-
-MESH_NAME = "FDCqrGLE"
-MESH_PASSWD = "3588b7f4"
-
-AWOX_CLOUD_FILENAME = "resp.json"
-
-# MQTT_BROKER = "localhost"
-MQTT_BROKER = "192.168.0.32"
-MQTT_USER = "mosquitto"
-MQTT_PASSWD = "protocol-supervision-failed"
 
 QUEUE_SLEEP_DURATION = datetime.timedelta(milliseconds=25)
 BTDEVICE_NOTIFICATION_TIMEOUT = datetime.timedelta(milliseconds=50)
@@ -430,4 +415,16 @@ def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
+
+    load_dotenv()
+
+    MESH_GATEWAY = os.getenv("MESH_GATEWAY")
+    MESH_GATEWAY_LIGHTID = os.getenv("MESH_GATEWAY_LIGHTID")
+    MESH_NAME = os.getenv("MESH_NAME")
+    MESH_PASSWD = os.getenv("MESH_PASSWD")
+    AWOX_CLOUD_FILENAME = os.getenv("AWOX_CLOUD_FILENAME")
+    MQTT_BROKER = os.getenv("MQTT_BROKER")
+    MQTT_USER = os.getenv("MQTT_USER")
+    MQTT_PASSWD = os.getenv("MQTT_PASSWD")
+
     main()
